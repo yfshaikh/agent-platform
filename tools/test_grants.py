@@ -35,4 +35,9 @@ changed = {**call, "params": {"name": "transfer_money", "arguments": {**argument
 assert "different call" in common.grant_problem(changed, sign(claims), sensitive)
 assert common.grant_problem(call, sign(claims), sensitive) is None
 assert "already used" in common.grant_problem(call, sign(claims), sensitive)
+try:
+    json.loads('{"amount": 1, "amount": 9000}', object_pairs_hook=common.no_duplicate_keys)
+    raise AssertionError("duplicate keys must be rejected")
+except ValueError:
+    pass
 print("grant checks passed")

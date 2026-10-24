@@ -89,6 +89,16 @@ def is_simulation(namespace):
     return labels.get("platform.hacktx.dev/simulation") == "true"
 
 
+def is_terminating(namespace):
+    """A namespace being deleted refuses new objects; everything in it is going away anyway."""
+    try:
+        return clients["core"].read_namespace(namespace).status.phase == "Terminating"
+    except kubernetes.client.ApiException as error:
+        if error.status == 404:
+            return True
+        raise
+
+
 def validate(spec, tools, simulation):
     """Reject specs the platform won't run. Returns a list of problems (empty = fine)."""
     problems = []
@@ -97,6 +107,8 @@ def validate(spec, tools, simulation):
         if tool is None:
             problems.append(f"unknown tool {entry['name']!r}")
             continue
+        if tool["spec"].get("simulationOnly") and not simulation:
+            problems.append(f"{entry['name']} is only for simulation namespaces")
         classes = tool["spec"]["classes"]
         for function in entry.get("allow", []):
             if function not in classes:
@@ -156,7 +168,7 @@ def build_objects(agent, tools, siblings_by_name, simulation):
             secret_data[token_env] = token
         tool_servers.append({"name": entry["name"], "url": tool["spec"]["url"], "token_env": token_env,
                              "classes": tool["spec"]["classes"], "allow": entry.get("allow", []),
-                             "approval": entry.get("approval", {})})
+                             "approval": entry.get("approval", {}), "approvalAbove": entry.get("approvalAbove", {})})
 
     talks_to = resolve_talks_to(agent, siblings_by_name)
     talked_to_by = sorted(other for other, other_agent in siblings_by_name.items()
@@ -239,7 +251,7 @@ def set_status(agent, **fields):
 def reconcile_namespace(namespace, logger):
     """Reconcile every Agent in a namespace. Siblings matter: one agent's talksTo changes another's network rules."""
     agents = list_agents(namespace)
-    if not agents:
+    if not agents or is_terminating(namespace):  # otherwise the delete handler retries forever and blocks namespace deletion
         return
     tools = tool_registry()
     simulation = is_simulation(namespace)

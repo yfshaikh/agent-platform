@@ -13,7 +13,7 @@ Showcase app on top: **Scam City**, a simulated town where AI scammers attack an
 
 | Folder | What |
 |---|---|
-| `api/` | platform API (FastAPI): agents CRUD, drafts, chat proxy, approval inbox (signs grants), traces, audit, live events; serves the console |
+| `api/` | platform API (FastAPI): agents CRUD, drafts, chat proxy, approval inbox (signs grants), traces, audit, live events, Scam City towns; serves the console |
 | `console/` | web console (React + React Flow): live agent graph, create, approvals, traces, audit log |
 | `runtime/` | the agent runtime every agent pod runs: model-and-tool loop, policy, approvals, budgets, traces |
 | `operator/` | kopf operator: turns `Agent` objects into ServiceAccount, Secret, Deployment, Service, NetworkPolicy |
@@ -38,6 +38,7 @@ kubectl --context kind-f1 apply -f deploy/examples/
 kubectl --context kind-f1 get agents -A
 uv run --project runtime python deploy/e2e_chunk_a.py                  # core platform checks
 uv run --project runtime python deploy/e2e_chunk_b.py                  # API, approvals, security checks
+uv run --project runtime python deploy/e2e_chunk_d.py                  # Scam City (real town, ~$0.30)
 ```
 
 Open the console:

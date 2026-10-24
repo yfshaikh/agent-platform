@@ -133,4 +133,6 @@ async def pay_bill(account_id: str, payee: str, amount: float) -> dict:
 
 
 if __name__ == "__main__":
-    serve(mcp, sensitive={"transfer_money", "pay_bill"})  # must match the Tool object's "sensitive" classes
+    # Must match the Tool object's "sensitive" classes. The simulation copy (Scam City) skips the grant check;
+    # the operator and a NetworkPolicy keep it reachable only from simulation namespaces.
+    serve(mcp, sensitive=set() if os.environ.get("SIMULATION") == "1" else {"transfer_money", "pay_bill"})

@@ -62,6 +62,17 @@ def grant_problem(message, grant, sensitive):
     return None
 
 
+MAX_BODY = 1_000_000
+
+
+def no_duplicate_keys(pairs):
+    """JSON object hook that rejects duplicate keys, so this check and the MCP library can't read different arguments."""
+    keys = [key for key, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate key")
+    return dict(pairs)
+
+
 def guard(app, token, sensitive=frozenset()):
     """Wrap an ASGI app: every HTTP request needs `Authorization: Bearer <token>`; sensitive calls also need a grant."""
     expected_header = f"Bearer {token}".encode()
@@ -84,12 +95,17 @@ def guard(app, token, sensitive=frozenset()):
         while more:
             chunk = await receive()
             body, more = body + chunk.get("body", b""), chunk.get("more_body", False)
-        try:
-            payload = json.loads(body)
+            if len(body) > MAX_BODY:
+                return await refuse(send, 413, "request too large")
+        try:  # fail closed: anything this check can't read unambiguously never reaches the tools
+            payload = json.loads(body, object_pairs_hook=no_duplicate_keys)
         except ValueError:
-            payload = None
+            return await refuse(send, 400, "request body must be plain JSON without duplicate keys")
+        messages = payload if isinstance(payload, list) else [payload]
+        if not all(isinstance(message, dict) for message in messages):
+            return await refuse(send, 400, "request body must be a JSON-RPC message")
         grant = headers.get(b"x-approval-grant", b"").decode()
-        for message in payload if isinstance(payload, list) else [payload]:
+        for message in messages:
             problem = grant_problem(message, grant, sensitive)
             if problem:
                 return await refuse(send, 403, problem)

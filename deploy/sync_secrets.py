@@ -90,6 +90,8 @@ if __name__ == "__main__":
         "APPROVAL_PRIVATE_KEY": private_key,
         "AGENT_KEY_MASTER": agent_key_master,
         "PLATFORM_TOKEN": stable_token("platform-api", "PLATFORM_TOKEN"),
+        # Scam City: the API opens a Nessie account per town resident (never logged: the key travels in the URL)
+        **({"NESSIE_API_KEY": os.environ["NESSIE_API_KEY"]} if os.environ.get("NESSIE_API_KEY") else {}),
     })
-    for tool in ["nessie", "serpapi"]:
+    for tool in ["nessie", "serpapi", "nessie-sim"]:
         apply_secret(f"tool-{tool}-token", {"TOOL_TOKEN": stable_token(f"tool-{tool}-token", "TOOL_TOKEN")})

@@ -121,6 +121,22 @@ def check_rules():
     agent.SIMULATION = True
     assert agent.tool_rule(server, "send_it") == "auto"
     agent.SIMULATION = False
+    assert agent.over_limit({"amount": 900}, 500) and not agent.over_limit({"amount": 40}, 500)
+    assert agent.over_limit({"amount": "lots"}, 500)  # not a number: fail closed
+    assert not agent.over_limit({"payee": "x"}, 500)  # no amount: the limit doesn't apply
+
+
+async def check_amount_limit():
+    """An auto tool with approvalAbove pauses for a human when the amount is over the limit, and runs when under."""
+    transfer = {"bank__transfer": {**tool_entry("transfer", "auto", "sensitive"), "above": 500}}
+    state = new_state("send 900")
+    model = scripted_model(tool_call_reply("bank__transfer", '{"amount": 900}'))
+    outcome = await agent.run_loop(state, transfer, model, echo_tool, can_pause=True)
+    assert outcome["status"] == "awaiting_approval", outcome
+    state = new_state("send 40")
+    model = scripted_model(tool_call_reply("bank__transfer", '{"amount": 40}'), {"role": "assistant", "content": "sent"})
+    outcome = await agent.run_loop(state, transfer, model, echo_tool, can_pause=True)
+    assert outcome["answer"] == "sent" and state["steps"][1]["rule"] == "auto", (outcome, state["steps"])
 
 
 def check_fake_model():
@@ -129,7 +145,7 @@ def check_fake_model():
     assert reply["tool_calls"][0]["function"] == {"name": "bank__transfer", "arguments": '{"amount": 5}'}
 
 
-for check in (check_tool_then_answer, check_refusals, check_pause_and_resume, check_denied_approval, check_limits):
+for check in (check_tool_then_answer, check_refusals, check_pause_and_resume, check_denied_approval, check_limits, check_amount_limit):
     asyncio.run(check())
 check_rules()
 check_fake_model()

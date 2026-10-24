@@ -1,7 +1,9 @@
 # A read-only research agent: live web search and shopping prices, nothing that changes anything.
 apiVersion: v1
 kind: Namespace
-metadata: {name: team-demo}
+metadata:
+  name: team-demo
+  labels: {platform.hacktx.dev/managed: "true"}  # the platform API only puts agents in managed namespaces
 ---
 apiVersion: platform.hacktx.dev/v1
 kind: Agent

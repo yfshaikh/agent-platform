@@ -39,6 +39,10 @@ spec:
                       approval:
                         type: object
                         additionalProperties: {type: string, enum: [auto, human, deny]}
+                      # e.g. {transfer_money: 500}: a call whose "amount" argument is above this needs a human, even if it's auto
+                      approvalAbove:
+                        type: object
+                        additionalProperties: {type: number, minimum: 0}
                 talksTo: {type: array, items: {type: string}}
                 replicas: {type: integer, minimum: 0, maximum: 5, default: 1}
                 budget:

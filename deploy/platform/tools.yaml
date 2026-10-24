@@ -25,3 +25,20 @@ spec:
     search_web: read
     shopping_prices: read
     local_places: read
+---
+# The same bank tools for Scam City towns: no signed-approval check at the tool server (town transfers may run
+# automatically), so only agents in simulation namespaces may use it (operator check + NetworkPolicy).
+apiVersion: platform.hacktx.dev/v1
+kind: Tool
+metadata: {name: nessie-sim, namespace: platform}
+spec:
+  url: http://tool-nessie-sim.platform.svc:8000/mcp
+  secretRef: tool-nessie-sim-token
+  description: Nessie bank for simulations (Scam City)
+  simulationOnly: true
+  classes:
+    get_customer_accounts: read
+    get_balance: read
+    list_transfers: read
+    transfer_money: sensitive
+    pay_bill: sensitive

@@ -109,6 +109,7 @@ ul.plain { list-style: none; padding: 0; margin: 0; font-size: 0.9rem; display: 
 .slip { background: var(--surface); border: 1px solid var(--line); border-top: 6px solid var(--wait); border-radius: 4px 4px 10px 10px; padding: 1rem 1.1rem; display: grid; gap: 0.7rem; }
 .slip.approve { border-top-color: var(--ok); opacity: 0.8; }
 .slip.deny { border-top-color: var(--bad); opacity: 0.8; }
+.slip.expired { border-top-color: var(--off); opacity: 0.6; }
 .slip header { display: grid; gap: 0.1rem; color: var(--muted); font-size: 0.9rem; }
 .slip header code { font-size: 1.05rem; color: var(--ink); font-weight: 600; }
 .amount { font-size: 3rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1; }
@@ -142,7 +143,47 @@ tr.approval-approve td:nth-child(3) { color: var(--ok); font-weight: 600; }
 .rule { color: var(--muted); }
 blockquote { margin: 1.2rem 0 0; padding: 0.8rem 1rem; background: var(--surface); border-left: 4px solid var(--ok); white-space: pre-wrap; }
 
+/* Scam City */
+.muted { color: var(--muted); font-weight: 500; }
+.town-form { display: flex; gap: 0.8rem; align-items: end; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.town-form label { width: 7rem; }
+.scoreboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.6rem; margin-bottom: 1rem; }
+.scoreboard > div { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.7rem 0.9rem; color: var(--muted); font-size: 0.9rem; }
+.scoreboard b { display: block; color: var(--ink); font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; }
+.scoreboard .bad b { color: var(--bad); }
+.scoreboard .ok b { color: var(--ok); }
+.scoreboard .wait { border-color: var(--wait); }
+.town-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.map { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.map .ring { fill: none; stroke: var(--line); stroke-dasharray: 4 6; }
+.map text { text-anchor: middle; font-size: 13px; font-weight: 650; fill: var(--ink); font-family: inherit; }
+.map text.small { font-size: 11px; font-weight: 500; fill: var(--muted); }
+.place.resident circle { fill: #eef3fd; stroke: var(--blue); stroke-width: 1.5; }
+.place.scammer circle { fill: #fbeceb; stroke: var(--bad); stroke-width: 1.5; }
+.place.bank rect { fill: var(--ink); }
+.place.bank text { fill: #fff; }
+.place.bank text.small { fill: #c9d1dc; }
+.flash { stroke-width: 3; animation: fade 8s linear forwards; }
+.flash.scam { stroke: var(--bad); stroke-dasharray: 6 5; }
+.flash.msg { stroke: var(--blue); }
+.flash.paid { stroke: var(--ok); stroke-width: 5; }
+.flash.stolen { stroke: var(--bad); stroke-width: 6; }
+.flash.blocked { stroke: var(--wait); stroke-dasharray: 2 6; }
+@keyframes fade { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .flash { animation: none; } }
+.feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; max-height: 70vh; overflow-y: auto; }
+.feed li { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.88rem; }
+.feed p { margin: 0.2rem 0 0; }
+.feed .who { font-weight: 650; }
+.feed .reply { color: var(--muted); }
+.feed .scam { border-left-color: var(--bad); }
+.feed .msg { border-left-color: var(--blue); }
+.feed .paid { border-left-color: var(--ok); }
+.feed .stolen { border-left-color: var(--bad); background: #fbeceb; }
+.feed .blocked { border-left-color: var(--wait); }
+
 @media (max-width: 760px) {
+  .town-body { grid-template-columns: 1fr; }
   .shell { grid-template-columns: 1fr; }
   .rail { flex-direction: row; overflow-x: auto; padding: 0.5rem; }
   .brand { display: none; }

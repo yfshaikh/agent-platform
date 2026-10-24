@@ -4,6 +4,7 @@ import { Agent, api, ApiError } from "./api";
 import { Graph } from "./Graph";
 import { Create } from "./Create";
 import { Approvals, Audit, Traces } from "./pages";
+import { Towns } from "./Town";
 import "./styles.css";
 
 export type TracePulse = { id: string; agent: string; namespace: string; status: string; tools: string[]; at: number };
@@ -62,6 +63,7 @@ function App() {
   const links = [
     ["graph", "Agents"],
     ["create", "Create"],
+    ["towns", "Scam City"],
     ["approvals", "Approvals"],
     ["traces", "Traces"],
     ["audit", "Audit log"],
@@ -83,6 +85,7 @@ function App() {
         {route === "approvals" && <Approvals pending={pending} />}
         {route === "traces" && <Traces traceId={param} />}
         {route === "audit" && <Audit />}
+        {route === "towns" && <Towns townId={param} />}
       </main>
     </div>
   );

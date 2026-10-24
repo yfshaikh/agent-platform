@@ -75,7 +75,7 @@ export function Approvals({ pending }: { pending: number }) {
                     <button disabled={deciding === item.id} onClick={() => decide(item.id, "approve")}>{deciding === item.id ? "Running…" : "Approve"}</button>
                   </div>
                 ) : (
-                  <span className="decided">{item.status === "approve" ? "Approved" : "Denied"} by {item.decided_by}</span>
+                  <span className="decided">{item.status === "expired" ? "Expired: the agent was deleted" : `${item.status === "approve" ? "Approved" : "Denied"} by ${item.decided_by}`}</span>
                 )}
               </footer>
             </article>

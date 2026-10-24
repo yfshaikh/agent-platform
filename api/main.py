@@ -14,6 +14,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import pathlib
 import re
@@ -33,6 +34,9 @@ from pydantic import BaseModel, Field
 
 from templates import TEMPLATES
 
+logging.getLogger("httpx").setLevel(logging.WARNING)  # request URLs at INFO would print the Nessie key (it's in the URL)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 GROUP, VERSION = "platform.hacktx.dev", "v1"
 PLATFORM_NAMESPACE = "platform"
 PLATFORM_TOKEN = os.environ["PLATFORM_TOKEN"]
@@ -41,8 +45,8 @@ DRAFT_MODEL = os.environ.get("DRAFT_MODEL", "anthropic/claude-haiku-5.5")
 AGENT_URL = os.environ.get("AGENT_URL_TEMPLATE", "http://agent-{name}.{namespace}.svc")
 GRANT_SECONDS = 300
 USD_PER_MILLION_TOKENS = float(os.environ.get("USD_PER_MILLION_TOKENS", "2.0"))  # ponytail: one blended rate, not per model
-RESERVED_NAMESPACES = re.compile(r"^(platform|default|kube-.*|local-path-storage)$")
 NAME_PATTERN = r"^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$"  # Kubernetes name rules, short enough for "agent-<name>-keys"
+MANAGED_LABEL = "platform.hacktx.dev/managed"  # only namespaces the platform created (or labeled) hold agents
 
 SCHEMA = """
 create table if not exists traces (
@@ -91,8 +95,9 @@ async def lifespan(app):
         kubernetes.config.load_kube_config()
     kube["custom"], kube["core"] = kubernetes.client.CustomObjectsApi(), kubernetes.client.CoreV1Api()
     state["db"] = await asyncpg.create_pool(os.environ["ADMIN_DATABASE_URL"], min_size=1, max_size=5, init=setup_connection)
+    import town  # imported here because town.py imports helpers from this module
     async with state["db"].acquire() as connection:
-        await connection.execute(SCHEMA)
+        await connection.execute(SCHEMA + town.SCHEMA)
         password_sql = await connection.fetchval("select format('alter role agent_runtime password %L', $1::text)",
                                                  os.environ["AGENT_DB_PASSWORD"])
         await connection.execute(password_sql)
@@ -228,10 +233,14 @@ def manifest(namespace, name, spec):
     return {"apiVersion": f"{GROUP}/{VERSION}", "kind": "Agent", "metadata": {"name": name, "namespace": namespace}, "spec": spec}
 
 
-def check_namespace(namespace):
-    """Agents never go into system namespaces (they'd sit next to the platform's own secrets and pods)."""
-    if RESERVED_NAMESPACES.match(namespace):
-        raise HTTPException(400, f"namespace {namespace!r} is reserved for the platform")
+async def check_target(namespace, name=None):
+    """Agents live only in platform-managed namespaces (never next to system pods or the platform's own secrets),
+    and names must be plain Kubernetes names (they become hostnames the API calls)."""
+    if not re.fullmatch(NAME_PATTERN, namespace) or (name is not None and not re.fullmatch(NAME_PATTERN, name)):
+        raise HTTPException(400, "namespace and name must be lowercase letters, digits and dashes")
+    found = await k8s(kube["core"].read_namespace, namespace)
+    if (found.metadata.labels or {}).get(MANAGED_LABEL) != "true":
+        raise HTTPException(400, f"namespace {namespace!r} isn't managed by the platform")
 
 
 async def tool_registry():
@@ -272,6 +281,7 @@ async def list_agents(actor=Depends(user)):
 @api.get("/agents/{namespace}/{name}")
 async def get_agent(namespace: str, name: str, actor=Depends(user)):
     """One agent: spec, status, pods, recent warnings, recent traces, pending approvals."""
+    await check_target(namespace, name)
     agent = await k8s(kube["custom"].get_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name)
     pods = await k8s(kube["core"].list_namespaced_pod, namespace, label_selector=f"platform.hacktx.dev/agent={name}")
     events = await k8s(kube["core"].list_namespaced_event, namespace, field_selector="type=Warning")
@@ -294,13 +304,13 @@ async def get_agent(namespace: str, name: str, actor=Depends(user)):
 @api.post("/agents")
 async def create_agent(body: NewAgent, actor=Depends(user)):
     """Create an Agent (and its namespace if new). The operator builds its pods within seconds."""
-    check_namespace(body.namespace)
     try:
         await asyncio.to_thread(kube["core"].read_namespace, body.namespace)
     except kubernetes.client.ApiException as error:
         if error.status != 404:
             raise
-        await k8s(kube["core"].create_namespace, {"metadata": {"name": body.namespace, "labels": {"platform.hacktx.dev/managed": "true"}}})
+        await k8s(kube["core"].create_namespace, {"metadata": {"name": body.namespace, "labels": {MANAGED_LABEL: "true"}}})
+    await check_target(body.namespace, body.name)
     created = await k8s(kube["custom"].create_namespaced_custom_object, GROUP, VERSION, body.namespace, "agents",
                         manifest(body.namespace, body.name, body.spec))
     await audit(actor, "agent_created", f"{body.namespace}/{body.name}", {"spec": body.spec})
@@ -310,7 +320,7 @@ async def create_agent(body: NewAgent, actor=Depends(user)):
 @api.put("/agents/{namespace}/{name}")
 async def update_agent(namespace: str, name: str, body: AgentSpec, actor=Depends(user)):
     """Replace an Agent's spec (the console's kill switch sends the same spec with replicas: 0)."""
-    check_namespace(namespace)
+    await check_target(namespace, name)
     agent = await k8s(kube["custom"].get_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name)
     before, agent["spec"] = agent["spec"], body.spec
     await k8s(kube["custom"].replace_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name, agent)
@@ -322,8 +332,10 @@ async def update_agent(namespace: str, name: str, body: AgentSpec, actor=Depends
 @api.delete("/agents/{namespace}/{name}")
 async def delete_agent(namespace: str, name: str, actor=Depends(user)):
     """Delete an Agent; Kubernetes deletes everything it owned."""
-    check_namespace(namespace)
+    await check_target(namespace, name)
     await k8s(kube["custom"].delete_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name)
+    # Its pending approvals can never run now; take them out of the inbox.
+    await db().execute("update approvals set status='expired' where namespace=$1 and agent=$2 and status='pending'", namespace, name)
     await audit(actor, "agent_deleted", f"{namespace}/{name}", {})
     return {"deleted": f"{namespace}/{name}"}
 
@@ -408,6 +420,7 @@ class ChatMessage(BaseModel):
 @api.post("/agents/{namespace}/{name}/chat")
 async def chat(namespace: str, name: str, body: ChatMessage, actor=Depends(user)):
     """Send a message to an agent and return its reply (or its request for approval)."""
+    await check_target(namespace, name)
     status, reply = await call_agent(namespace, name, "/chat", body.model_dump())
     return JSONResponse(reply, status_code=status)
 
@@ -512,6 +525,10 @@ async def events(request: Request, actor=Depends(user)):
 
 
 app.include_router(api)
+
+from town import router as town_router  # noqa: E402 (needs everything above; town.py imports from this module)
+
+app.include_router(town_router)
 
 
 @app.get("/healthz")

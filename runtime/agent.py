@@ -82,6 +82,7 @@ async def list_tools(server):
     return [
         {
             "server": server, "tool_name": tool.name, "rule": tool_rule(server, tool.name),
+            "above": server.get("approvalAbove", {}).get(tool.name),
             "class": server.get("classes", {}).get(tool.name, "sensitive"),
             "schema": {"type": "function", "function": {
                 "name": f"{server['name']}__{tool.name}", "description": tool.description or "",
@@ -161,6 +162,16 @@ async def call_model(messages, tool_schemas):
     return body["choices"][0]["message"], body.get("usage", {}).get("total_tokens", 0)
 
 
+def over_limit(arguments, limit):
+    """True if a call's "amount" is above the limit. An amount that isn't a number counts as over (fail closed)."""
+    if not isinstance(arguments, dict) or "amount" not in arguments:
+        return False
+    try:
+        return float(arguments["amount"]) > limit
+    except (TypeError, ValueError):
+        return True
+
+
 async def no_budget_check():
     """Default budget check: always allow (used when there is no database)."""
     return None
@@ -188,6 +199,8 @@ async def run_loop(state, tools_by_name, model=call_model, tool_runner=call_tool
                 arguments = None
             tool = tools_by_name.get(name)
             rule = tool["rule"] if tool else "blocked"
+            if rule == "auto" and tool and tool.get("above") is not None and over_limit(arguments, tool["above"]):
+                rule = "human"  # e.g. town transfers run automatically, but not above $500
             decision = state["decisions"].pop(tool_call["id"], None)
             if rule == "human" and decision is None and can_pause:
                 return {"status": "awaiting_approval", "tool": name, "arguments": arguments}
