@@ -1,9 +1,10 @@
 // Every call goes to the platform API (same origin; the session cookie logs us in).
+import { createContext, useContext } from "react";
 
 export type Spec = {
   model: string;
   instructions: string;
-  tools?: { name: string; allow?: string[]; approval?: Record<string, string> }[];
+  tools?: { name: string; allow?: string[]; approval?: Record<string, string>; approvalAbove?: number }[];
   talksTo?: string[];
   replicas?: number;
   budget?: { tokensPerDay?: number; maxStepsPerRequest?: number };
@@ -59,3 +60,15 @@ export async function api<T>(path: string, init?: RequestInit & { json?: unknown
 }
 
 export const go = (path: string) => (window.location.hash = path);
+
+// Who is logged in and what their role allows (the API enforces it; the console only hides what won't work).
+export type Me = { user: string; role: string | null; permissions: string[] };
+export const MeContext = createContext<Me>({ user: "", role: null, permissions: [] });
+export const useCan = (permission: string) => useContext(MeContext).permissions.includes(permission);
+
+// A draft handed from the voice dock to the Create page (which reads it once when it opens).
+export type Draft = { name: string; spec: Spec; problems: string[] };
+export const handoff: { draft?: Draft } = {};
+
+// Tell the voice assistant what the user just did on screen (only heard if a call is open).
+export const tellVoice = (text: string) => window.dispatchEvent(new CustomEvent("voice-ui", { detail: text }));

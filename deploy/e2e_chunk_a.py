@@ -145,7 +145,7 @@ def main():
     record("NetworkPolicy: researcher is blocked from tools it didn't list", not reach_nessie)
     record("NetworkPolicy: bank can't reach the researcher (no talksTo)", not pod_can_reach("bank-assistant", "agent-researcher", 80))
 
-    # 5. The operator refuses to loosen a sensitive tool outside a simulation namespace.
+    # 5. The operator refuses to loosen a sensitive tool.
     apply_agent("loose", {"model": "fake", "instructions": "test", "tools": [{"name": "nessie", "approval": {"transfer_money": "auto"}}]})
     status = wait_for_agent("loose", "Failed", timeout=30)
     record("operator rejects auto-approving a sensitive tool", status.get("phase") == "Failed", status.get("message", "")[:100])

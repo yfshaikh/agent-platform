@@ -86,7 +86,7 @@ metadata: {name: agent-operator-read-keys, namespace: platform}
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [platform-keys, tool-nessie-token, tool-serpapi-token, tool-nessie-sim-token]
+    resourceNames: [platform-keys, tool-nessie-token, tool-serpapi-token]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -195,8 +195,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: tools-ingress, namespace: platform}
 spec:
-  podSelector: {matchExpressions: [{key: platform.hacktx.dev/tool, operator: NotIn, values: [nessie-sim]},
-                                   {key: platform.hacktx.dev/tool, operator: Exists}]}
+  podSelector: {matchExpressions: [{key: platform.hacktx.dev/tool, operator: Exists}]}
   policyTypes: [Ingress]
   ingress:
     - from:
@@ -227,7 +226,7 @@ rules:
     verbs: [get, list]
   - apiGroups: [""]
     resources: [namespaces]
-    verbs: [get, list, create, delete]  # delete: only Scam City towns and crash-test sandboxes (checked in code)
+    verbs: [get, list, create, delete]  # delete: only crash-test sandboxes (checked in code)
   - apiGroups: [""]
     resources: [secrets]
     resourceNames: [agent-caller-token]  # to call agents; it can't read any other Secret
@@ -267,47 +266,39 @@ spec:
   selector: {app: platform-api}
   ports: [{port: 80, targetPort: 8000}]
 ---
-# Scam City's bank: same server, no signed-approval check (towns may auto-approve small transfers).
-# Reachable only from simulation namespaces; the operator also refuses this tool anywhere else.
+# The voice server. Only the platform API can reach it (it relays the console's call); it holds no platform credential.
 apiVersion: apps/v1
 kind: Deployment
-metadata: {name: tool-nessie-sim, namespace: platform}
+metadata: {name: voice, namespace: platform}
 spec:
   replicas: 1
-  selector: {matchLabels: {platform.hacktx.dev/tool: nessie-sim}}
+  selector: {matchLabels: {app: voice}}
   template:
-    metadata: {labels: {platform.hacktx.dev/tool: nessie-sim}}
+    metadata: {labels: {app: voice}}
     spec:
+      automountServiceAccountToken: false  # it never talks to Kubernetes
       containers:
-        - name: tool
-          image: platform-tools:dev
+        - name: voice
+          image: platform-voice:dev
           imagePullPolicy: Never
-          args: [nessie_server.py]
-          env:
-            - name: TOOL_TOKEN
-              valueFrom: {secretKeyRef: {name: tool-nessie-sim-token, key: TOOL_TOKEN}}
-            - name: NESSIE_API_KEY
-              valueFrom: {secretKeyRef: {name: platform-keys, key: NESSIE_API_KEY, optional: true}}
-            - {name: SIMULATION, value: "1"}
-            - {name: NESSIE_MOCK, value: "0"}
-          ports: [{containerPort: 8000}]
-          resources: {requests: {cpu: 20m, memory: 96Mi}, limits: {memory: 256Mi}}
+          envFrom: [{secretRef: {name: voice}}]
+          ports: [{containerPort: 7860}]
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 1Gi}}
+          securityContext: {allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 10001, capabilities: {drop: [ALL]}}
 ---
 apiVersion: v1
 kind: Service
-metadata: {name: tool-nessie-sim, namespace: platform}
+metadata: {name: voice, namespace: platform}
 spec:
-  selector: {platform.hacktx.dev/tool: nessie-sim}
-  ports: [{port: 8000}]
+  selector: {app: voice}
+  ports: [{port: 7860}]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
-metadata: {name: nessie-sim-ingress, namespace: platform}
+metadata: {name: voice-ingress, namespace: platform}
 spec:
-  podSelector: {matchLabels: {platform.hacktx.dev/tool: nessie-sim}}
+  podSelector: {matchLabels: {app: voice}}
   policyTypes: [Ingress]
   ingress:
-    - from:
-        - namespaceSelector: {matchLabels: {platform.hacktx.dev/simulation: "true"}}
-          podSelector: {matchExpressions: [{key: platform.hacktx.dev/agent, operator: Exists}]}
-      ports: [{port: 8000}]
+    - from: [{podSelector: {matchLabels: {app: platform-api}}}]
+      ports: [{port: 7860}]

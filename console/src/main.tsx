@@ -1,11 +1,14 @@
-import { StrictMode, useEffect, useState } from "react";
+import { lazy, StrictMode, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Agent, api, ApiError } from "./api";
+import { Agent, api, ApiError, Me, MeContext } from "./api";
 import { Graph } from "./Graph";
 import { Create } from "./Create";
-import { Approvals, Audit, Traces } from "./pages";
-import { Towns } from "./Town";
+import { Login, Mark } from "./Login";
+import { Approvals, Audit, Traces, Users } from "./pages";
 import "./styles.css";
+
+// The voice dock pulls in Pipecat and the 3D orb, so it loads only when someone opens it.
+const Voice = lazy(() => import("./Voice"));
 
 export type TracePulse = { id: string; agent: string; namespace: string; status: string; tools: string[]; at: number };
 
@@ -21,7 +24,7 @@ function useHash() {
 
 // One live stream for the whole console: agent snapshots and each new trace (for pulsing graph edges).
 function useEvents(enabled: boolean) {
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agents, setAgents] = useState<Agent[] | null>(null); // null until the first snapshot
   const [pending, setPending] = useState(0);
   const [pulse, setPulse] = useState<TracePulse | null>(null);
   useEffect(() => {
@@ -40,54 +43,71 @@ function useEvents(enabled: boolean) {
 
 function App() {
   const [route, param] = useHash();
-  const [login, setLogin] = useState<"checking" | "in" | "out">("checking");
-  const { agents, pending, pulse } = useEvents(login === "in");
-  useEffect(() => {
-    api("/me").then(
-      () => setLogin("in"),
-      (error) => setLogin(error instanceof ApiError && error.status === 401 ? "out" : "in"),
-    );
-  }, []);
+  const [me, setMe] = useState<Me | null | "checking">("checking");
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const { agents, pending, pulse } = useEvents(me !== null && me !== "checking");
 
-  if (login === "checking") return null;
-  if (login === "out")
-    return (
-      <main className="login">
-        <h1>Agent Platform</h1>
-        <p>You're not logged in. From the <code>agent-platform</code> folder, run:</p>
-        <pre>uv run --project api python deploy/login_link.py</pre>
-        <p>and open the link it prints. Each link works once, for five minutes.</p>
-      </main>
-    );
+  const loadMe = () =>
+    api<Me>("/me").then(setMe, (error) => setMe(error instanceof ApiError && error.status === 401 ? null : { user: "?", role: null, permissions: [] }));
+  useEffect(() => void loadMe(), []);
 
-  const links = [
-    ["graph", "Agents"],
-    ["create", "Create"],
-    ["towns", "Scam City"],
-    ["approvals", "Approvals"],
-    ["traces", "Traces"],
-    ["audit", "Audit log"],
+  if (me === "checking") return null;
+  if (me === null) return <Login onLogin={loadMe} />;
+
+  const can = (permission: string) => me.permissions.includes(permission);
+  const links: [string, string, boolean][] = [
+    ["graph", "Agents", true],
+    ["create", "Build an agent", can("draft") || can("build")],
+    ["approvals", "Approvals", true],
+    ["traces", "Traces", true],
+    ["audit", "Audit log", true],
+    ["users", "People", can("admin")],
   ];
+  async function logout() {
+    await api("/logout", { method: "POST" }).catch(() => undefined);
+    setMe(null);
+  }
+
   return (
-    <div className="shell">
-      <nav className="rail" aria-label="Main">
-        <div className="brand">Agent Platform</div>
-        {links.map(([id, label]) => (
-          <a key={id} href={`#/${id}`} aria-current={route === id ? "page" : undefined}>
-            {label}
-            {id === "approvals" && pending > 0 && <span className="badge" aria-label={`${pending} waiting`}>{pending}</span>}
-          </a>
-        ))}
-      </nav>
-      <main className="page">
-        {route === "graph" && <Graph agents={agents} pulse={pulse} selected={param} />}
-        {route === "create" && <Create />}
-        {route === "approvals" && <Approvals pending={pending} />}
-        {route === "traces" && <Traces traceId={param} />}
-        {route === "audit" && <Audit />}
-        {route === "towns" && <Towns townId={param} />}
-      </main>
-    </div>
+    <MeContext.Provider value={me}>
+      <div className="shell">
+        <nav className="rail" aria-label="Main">
+          <div className="mark">
+            <Mark />
+            <span>NMC² Agents<small>GPU cloud operations</small></span>
+          </div>
+          {links.filter(([, , shown]) => shown).map(([id, label]) => (
+            <a key={id} href={`#/${id}`} aria-current={route === id ? "page" : undefined}>
+              {label}
+              {id === "approvals" && pending > 0 && <span className="count" aria-label={`${pending} waiting`}>{pending}</span>}
+            </a>
+          ))}
+          <button className="voice-launch" onClick={() => setVoiceOpen(!voiceOpen)} aria-pressed={voiceOpen}>
+            <i aria-hidden /> Talk to the platform
+          </button>
+          <div className="whoami">
+            <strong>{me.user}</strong>
+            <div className="row">
+              <span className="muted">{me.role ?? "custom role"}</span>
+              <button className="link small" onClick={logout}>Sign out</button>
+            </div>
+          </div>
+        </nav>
+        <main className="page">
+          {route === "graph" && <Graph agents={agents} pulse={pulse} selected={param} pending={pending} />}
+          {route === "create" && <Create key={param} />}
+          {route === "approvals" && <Approvals pending={pending} />}
+          {route === "traces" && <Traces traceId={param} />}
+          {route === "audit" && <Audit />}
+          {route === "users" && <Users />}
+        </main>
+      </div>
+      {voiceOpen && (
+        <Suspense fallback={null}>
+          <Voice onClose={() => setVoiceOpen(false)} />
+        </Suspense>
+      )}
+    </MeContext.Provider>
   );
 }
 

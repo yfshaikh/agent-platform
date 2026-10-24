@@ -13,9 +13,9 @@ export type CrashTest = {
   results: { category: string; title: string; message?: string; outcome: "resisted" | "contained" | "failed" | "error"; reason: string; answer?: string; trace_id?: string }[] | null;
 };
 
-const outcomeLabel = { resisted: "Resisted", contained: "Contained by the platform", failed: "Failed", error: "Error" };
+const outcomeLabel = { resisted: "Resisted", contained: "Contained", failed: "Failed", error: "Error" };
 
-// Polls a crash test until it finishes, then shows the score and every attack.
+// Polls a crash test until it finishes.
 export function useCrashTest(id: string | null) {
   const [test, setTest] = useState<CrashTest | null>(null);
   useEffect(() => {
@@ -34,40 +34,37 @@ export function useCrashTest(id: string | null) {
   return test;
 }
 
+// The score, then every attack: resisted on its own, contained by the platform, or failed.
 export function CrashReport({ test }: { test: CrashTest }) {
   if (test.status === "running")
-    return <p className="crash-running">Attacking a sandbox copy with {test.attacks} attacks… this takes about a minute.</p>;
+    return <p className="running">Attacking a sandbox copy with {test.attacks} attacks. This takes about a minute.</p>;
   if (test.status === "failed") return <p className="error">The crash test couldn't run: {test.error}</p>;
   const counts = { resisted: 0, contained: 0, failed: 0, error: 0 };
   test.results?.forEach((result) => counts[result.outcome]++);
   return (
-    <section className={`crash ${test.passed ? "passed" : "not-passed"}`}>
+    <section className={`crash ${test.passed ? "passed" : "not-passed"}`} aria-label="Crash test report">
       <div className="crash-head">
-        <div className="crash-score">{test.score}</div>
+        <div className="score">{test.score}</div>
         <div>
-          <strong>{test.passed ? "Passed" : "Didn't pass"}</strong> (pass mark {test.pass_score}, and nothing may fail)
-          <div className="hint">
+          <strong>{test.passed ? "Passed" : "Didn't pass"}</strong>
+          <p className="small muted">
             {counts.resisted} resisted on its own, {counts.contained} contained by the platform, {counts.failed} failed
-            {counts.error ? `, ${counts.error} errors` : ""}
-          </div>
+            {counts.error ? `, ${counts.error} errors` : ""}. Passing needs {test.pass_score} and no failures.
+          </p>
         </div>
       </div>
-      <table>
-        <thead><tr><th>Attack</th><th>Result</th><th>What happened</th></tr></thead>
-        <tbody>
-          {test.results?.map((result) => (
-            <tr key={result.title} className={`outcome-${result.outcome}`}>
-              <td><strong>{result.title}</strong><div className="hint">{result.category}</div></td>
-              <td className="outcome">{outcomeLabel[result.outcome]}</td>
-              <td>
-                {result.reason}
-                {result.trace_id && <> (<a href={`#/traces/${result.trace_id}`}>trace</a>)</>}
-                {result.answer && <div className="hint answer">“{result.answer.slice(0, 180)}{result.answer.length > 180 ? "…" : ""}”</div>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="attacks">
+        {test.results?.map((result) => (
+          <div key={result.title} className={`attack ${result.outcome}`}>
+            <span className="verdict">{outcomeLabel[result.outcome]}</span>
+            <span>
+              <strong>{result.title}</strong>: {result.reason}
+              {result.trace_id && <> <a href={`#/traces/${result.trace_id}`}>Trace</a></>}
+            </span>
+            {result.answer && <q>{result.answer.slice(0, 180)}{result.answer.length > 180 ? "…" : ""}</q>}
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

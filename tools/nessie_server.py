@@ -9,7 +9,6 @@ The API key travels in the URL, so URLs are never logged or put in error message
 """
 import datetime
 import os
-import re
 import uuid
 
 import httpx
@@ -98,18 +97,6 @@ async def list_transfers(account_id: str) -> list[dict]:
             for record in movements[:20]]
 
 
-TOWN_TAG = re.compile(r"\(([0-9a-f]{6})\)$")  # town accounts are nicknamed "<member> (<town id>)"
-
-
-def check_same_town(*accounts):
-    """Simulation copy only: money may move only between accounts of one Scam City town, never real customers' accounts."""
-    if os.environ.get("SIMULATION") != "1":
-        return
-    tags = {(match.group(1) if (match := TOWN_TAG.search(account.get("nickname") or "")) else None) for account in accounts}
-    if None in tags or len(tags) != 1:
-        raise ValueError("the simulation bank only moves money between accounts of the same town")
-
-
 @mcp.tool(annotations=ToolAnnotations(title="Transfer money", read_only_hint=False, destructive_hint=True))
 async def transfer_money(from_account_id: str, to_account_id: str, amount: float, description: str) -> dict:
     """Move money from one account to another. Irreversible: the platform requires a human approval for every call."""
@@ -121,7 +108,6 @@ async def transfer_money(from_account_id: str, to_account_id: str, amount: float
     if amount > balance:
         raise ValueError(f"insufficient funds: balance is {balance}")
     _, recipient = await balance_of(to_account_id)  # fails clearly if the recipient doesn't exist, before any money moves
-    check_same_town(source, recipient)
     record = {"medium": "balance", "transaction_date": today(), "status": "completed", "amount": amount}
     withdrawal = await nessie("POST", f"/accounts/{from_account_id}/withdrawals",
                               {**record, "description": f"Transfer to {to_account_id}: {description}"})
@@ -140,7 +126,6 @@ async def pay_bill(account_id: str, payee: str, amount: float) -> dict:
     balance, account = await balance_of(account_id)
     if amount > balance:
         raise ValueError(f"insufficient funds: balance is {balance}")
-    check_same_town(account)
     withdrawal = await nessie("POST", f"/accounts/{account_id}/withdrawals", {
         "medium": "balance", "transaction_date": today(), "status": "completed", "amount": amount, "description": f"Bill: {payee}"})
     return {"status": "completed", "payee": payee, "amount": amount, "withdrawal_id": withdrawal["objectCreated"]["_id"],
@@ -148,6 +133,4 @@ async def pay_bill(account_id: str, payee: str, amount: float) -> dict:
 
 
 if __name__ == "__main__":
-    # Must match the Tool object's "sensitive" classes. The simulation copy (Scam City) skips the grant check;
-    # the operator and a NetworkPolicy keep it reachable only from simulation namespaces.
-    serve(mcp, sensitive=set() if os.environ.get("SIMULATION") == "1" else {"transfer_money", "pay_bill"})
+    serve(mcp, sensitive={"transfer_money", "pay_bill"})  # must match the Tool object's "sensitive" classes

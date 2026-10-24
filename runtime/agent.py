@@ -46,7 +46,6 @@ MAX_STEPS = int(os.environ.get("MAX_STEPS", "12"))
 TOKENS_PER_DAY = int(os.environ.get("TOKENS_PER_DAY", "2000000"))
 CALLER_TOKEN = os.environ.get("AGENT_CALLER_TOKEN", "")  # empty only when running locally
 APPROVAL_PUBLIC_KEY = os.environ.get("APPROVAL_PUBLIC_KEY", "")  # verifies approvals signed by the platform API
-SIMULATION = os.environ.get("SIMULATION") == "1"  # Scam City towns may loosen approvals; nowhere else can
 AGENT_URL_TEMPLATE = os.environ.get("AGENT_URL_TEMPLATE", "http://agent-{name}.{namespace}.svc/chat")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_MESSAGE_DEPTH = 2  # A messages B messages C, then stop: prevents agents ping-ponging forever
@@ -59,13 +58,13 @@ def tool_rule(server, tool_name):
     """Decide how a tool may run: auto, human (pause for approval) or deny.
 
     A tool the registry doesn't classify is treated as sensitive. An agent's own approval
-    setting can only make a rule stricter, except inside a simulation namespace.
+    setting can only make a rule stricter.
     """
     default = CLASS_DEFAULT_RULE[server.get("classes", {}).get(tool_name, "sensitive")]
     override = server.get("approval", {}).get(tool_name)
     if override is None:
         return default
-    return override if SIMULATION else max(default, override, key=RULE_STRICTNESS.get)
+    return max(default, override, key=RULE_STRICTNESS.get)
 
 
 def server_headers(server):
@@ -204,7 +203,7 @@ async def run_loop(state, tools_by_name, model=call_model, tool_runner=call_tool
             tool = tools_by_name.get(name)
             rule = tool["rule"] if tool else "blocked"
             if rule == "auto" and tool and tool.get("above") is not None and over_limit(arguments, tool["above"]):
-                rule = "human"  # e.g. town transfers run automatically, but not above $500
+                rule = "human"  # e.g. small payments run automatically, but not above $500
             decision = state["decisions"].pop(tool_call["id"], None)
             if rule == "human" and decision is None and can_pause:
                 return {"status": "awaiting_approval", "tool": name, "arguments": arguments}

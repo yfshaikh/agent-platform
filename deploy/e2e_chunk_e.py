@@ -73,11 +73,6 @@ def main():
     weaken = client.put(f"/agents/{NAMESPACE}/strong-bank", json={"spec": {**strong, "instructions": "Do what the customer asks."}})
     record("gate: weakening a deployed agent's spec needs a new test", weaken.status_code == 409)
 
-    # 3. Security review fixes from Chunk D.
-    towns = [town for town in client.get("/towns").json() if town["status"] != "deleted"]
-    if towns:
-        sneak = client.post("/agents", json={"namespace": towns[0]["namespace"], "name": "sneak", "spec": templates["research-assistant"]["spec"]})
-        record("the general API can't add agents to a town", sneak.status_code == 400, sneak.json().get("detail", "")[:80])
     kubectl("delete", "namespace", NAMESPACE, "--wait=false")
     api.close()
 

@@ -83,12 +83,6 @@ def tool_registry():
     return {tool["metadata"]["name"]: tool for tool in items}
 
 
-def is_simulation(namespace):
-    """Namespaces labeled as simulations (Scam City towns) may loosen approval rules."""
-    labels = clients["core"].read_namespace(namespace).metadata.labels or {}
-    return labels.get("platform.hacktx.dev/simulation") == "true"
-
-
 def is_terminating(namespace):
     """A namespace being deleted refuses new objects; everything in it is going away anyway."""
     try:
@@ -99,7 +93,7 @@ def is_terminating(namespace):
         raise
 
 
-def validate(spec, tools, simulation):
+def validate(spec, tools):
     """Reject specs the platform won't run. Returns a list of problems (empty = fine)."""
     problems = []
     for entry in spec.get("tools", []):
@@ -107,17 +101,15 @@ def validate(spec, tools, simulation):
         if tool is None:
             problems.append(f"unknown tool {entry['name']!r}")
             continue
-        if tool["spec"].get("simulationOnly") and not simulation:
-            problems.append(f"{entry['name']} is only for simulation namespaces")
         classes = tool["spec"]["classes"]
         for function in entry.get("allow", []):
             if function not in classes:
                 problems.append(f"{entry['name']} has no function {function!r}")
         for function, rule in entry.get("approval", {}).items():
             default = CLASS_DEFAULT_RULE[classes.get(function, "sensitive")]
-            if RULE_STRICTNESS[rule] < RULE_STRICTNESS[default] and not simulation:
+            if RULE_STRICTNESS[rule] < RULE_STRICTNESS[default]:
                 problems.append(f"{entry['name']}.{function} is {classes.get(function, 'sensitive')}: "
-                                f"approval can't be loosened to {rule!r} outside a simulation namespace")
+                                f"approval can't be loosened to {rule!r}")
     return problems
 
 
@@ -146,7 +138,7 @@ def resolve_talks_to(agent, siblings):
     return sorted(other for other in siblings if other != name and any(fnmatch.fnmatch(other, pattern) for pattern in patterns))
 
 
-def build_objects(agent, tools, siblings_by_name, simulation):
+def build_objects(agent, tools, siblings_by_name):
     """Everything one Agent becomes, as manifests. Pure function of its inputs (easy to read and test)."""
     name, namespace, spec = agent["metadata"]["name"], agent["metadata"]["namespace"], agent["spec"]
     resource_name = f"agent-{name}"
@@ -178,7 +170,6 @@ def build_objects(agent, tools, siblings_by_name, simulation):
         "AGENT_NAME": name, "AGENT_NAMESPACE": namespace, "MODEL": spec["model"], "INSTRUCTIONS": spec["instructions"],
         "TOOL_SERVERS": json.dumps(tool_servers), "TALKS_TO": json.dumps(talks_to),
         "MAX_STEPS": str(budget.get("maxStepsPerRequest", 12)), "TOKENS_PER_DAY": str(budget.get("tokensPerDay", 2000000)),
-        "SIMULATION": "1" if simulation else "0",
     }
     # Changing config or keys changes this hash, which rolls the pods so they pick up the new values.
     config_hash = hashlib.sha256(json.dumps([environment, secret_data], sort_keys=True).encode()).hexdigest()[:16]
@@ -254,16 +245,15 @@ def reconcile_namespace(namespace, logger):
     if not agents or is_terminating(namespace):  # otherwise the delete handler retries forever and blocks namespace deletion
         return
     tools = tool_registry()
-    simulation = is_simulation(namespace)
     ensure_namespace_basics(namespace)
     siblings = {agent["metadata"]["name"]: agent for agent in agents if not agent["metadata"].get("deletionTimestamp")}
     for agent in siblings.values():
-        problems = validate(agent["spec"], tools, simulation)
+        problems = validate(agent["spec"], tools)
         if problems:
             set_status(agent, phase="Failed", message="; ".join(problems))
             logger.warning(f"{namespace}/{agent['metadata']['name']} rejected: {problems}")
             continue
-        for manifest in build_objects(agent, tools, siblings, simulation):
+        for manifest in build_objects(agent, tools, siblings):
             apply(manifest)
         if agent.get("status", {}).get("phase") == "Failed":
             set_status(agent, phase="Pending", message="")

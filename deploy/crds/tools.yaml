@@ -25,7 +25,6 @@ spec:
                 url: {type: string}
                 secretRef: {type: string}
                 description: {type: string}
-                simulationOnly: {type: boolean}  # usable only by agents in simulation namespaces (Scam City towns)
                 classes:
                   type: object
                   additionalProperties: {type: string, enum: [read, write, sensitive]}

@@ -2,58 +2,86 @@ import { useEffect, useMemo, useState } from "react";
 import { Background, Controls, Edge, Handle, Node, NodeProps, Position, ReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import YAML from "yaml";
-import { Agent, api, go, Reply, Tool } from "./api";
+import { Agent, api, go, Reply, Tool, useCan } from "./api";
 import type { TracePulse } from "./main";
 
 const PULSE_MS = 4000;
+const DEFAULT_TOKENS_PER_DAY = 2_000_000; // the runtime's default when a spec sets no budget
 
-const phaseClass = (phase?: string) =>
-  ({ Running: "ok", Pending: "wait", Stopped: "off", Failed: "bad" })[phase ?? ""] ?? "wait";
+const phaseClass = (phase?: string) => ({ Running: "ok", Pending: "wait", Stopped: "off", Failed: "bad" })[phase ?? ""] ?? "wait";
+const compact = (value: number) => Intl.NumberFormat("en", { notation: "compact" }).format(value);
 
-function AgentNode({ data }: NodeProps<Node<{ agent: Agent }>>) {
-  const { agent } = data;
-  const wanted = agent.spec.replicas ?? 1;
+type ModuleData = { agent: Agent; classes: Record<string, Tool["classes"]> };
+
+// An agent, drawn as a rack module: status LED, a port per tool (amber if it can call something sensitive), budget bar.
+function AgentModule({ data }: NodeProps<Node<ModuleData>>) {
+  const { agent, classes } = data;
+  const budget = agent.spec.budget?.tokensPerDay ?? DEFAULT_TOKENS_PER_DAY;
+  const used = Math.min(100, (agent.tokens_today / budget) * 100);
+  const tools = agent.spec.tools ?? [];
   return (
-    <div className={`node agent-node ${phaseClass(agent.status.phase)}`}>
+    <div className={`module ${phaseClass(agent.status.phase)}`}>
       <Handle type="target" position={Position.Left} />
-      <div className="node-title">
-        <span className="dot" aria-hidden /> {agent.name}
-      </div>
-      <div className="node-meta">{agent.namespace}</div>
-      <div className="node-stats">
-        <span>{agent.status.phase ?? "Pending"}</span>
-        <span>{agent.status.readyReplicas ?? 0}/{wanted} pods</span>
-        <span>{agent.tokens_today.toLocaleString()} tokens today</span>
+      <div className="led" aria-hidden />
+      <div className="module-body">
+        <div className="module-top">
+          <strong>{agent.name}</strong>
+          <span className="pods" title="Ready pods / wanted">{agent.status.readyReplicas ?? 0}/{agent.spec.replicas ?? 1}</span>
+        </div>
+        <div className="team">{agent.status.phase ?? "Pending"} in {agent.namespace}</div>
+        <div className="ports">
+          {tools.length === 0 && <span className="port none">no tools</span>}
+          {tools.map((tool) => {
+            const functions = tool.allow ?? Object.keys(classes[tool.name] ?? {});
+            const sensitive = functions.some((name) => (classes[tool.name]?.[name] ?? "sensitive") === "sensitive");
+            return <span key={tool.name} className={`port ${sensitive ? "sensitive" : ""}`} title={sensitive ? "Can request actions that need a human" : undefined}>{tool.name}</span>;
+          })}
+        </div>
+        <div className="budget">
+          <div className="bar"><span style={{ width: `${used}%` }} /></div>
+          <span>{compact(agent.tokens_today)} of {compact(budget)} tokens today</span>
+        </div>
       </div>
       <Handle type="source" position={Position.Right} />
     </div>
   );
 }
 
-function ToolNode({ data }: NodeProps<Node<{ tool: Tool }>>) {
+// A tool server, drawn as a patch panel: its functions and who decides when they run.
+function ToolPanel({ data }: NodeProps<Node<{ tool: Tool }>>) {
+  const decides = { read: "runs", write: "runs", sensitive: "human approves" };
   return (
-    <div className="node tool-node">
+    <div className="panel-tool">
       <Handle type="target" position={Position.Left} />
-      <div className="node-title">{data.tool.name}</div>
-      <ul className="functions">
+      <strong>{data.tool.name}</strong>
+      <p>{data.tool.description}</p>
+      <ul>
         {Object.entries(data.tool.classes).map(([name, kind]) => (
-          <li key={name} className={kind}>
-            {name}
-            {kind === "sensitive" && <span title="Needs a human approval"> (needs approval)</span>}
-          </li>
+          <li key={name} className={kind}>{name}<span>{decides[kind]}</span></li>
         ))}
       </ul>
     </div>
   );
 }
 
-const nodeTypes = { agent: AgentNode, tool: ToolNode };
+const nodeTypes = { agent: AgentModule, tool: ToolPanel };
 const globToRegex = (glob: string) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
 
-export function Graph({ agents, pulse, selected }: { agents: Agent[]; pulse: TracePulse | null; selected?: string }) {
+export function Graph({ agents: snapshot, pulse, selected, pending }: { agents: Agent[] | null; pulse: TracePulse | null; selected?: string; pending: number }) {
   const [tools, setTools] = useState<Tool[]>([]);
   const [hot, setHot] = useState<Record<string, number>>({});
+  const [team, setTeam] = useState("all");
+  const [width, setWidth] = useState(() => Math.round(window.innerWidth / 200));
+  useEffect(() => {
+    const update = () => setWidth(Math.round(window.innerWidth / 200)); // re-fit when the window changes size noticeably
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
   useEffect(() => void api<Tool[]>("/tools").then(setTools), []);
+
+  const agents = (snapshot ?? []).filter((agent) => !agent.namespace.startsWith("crash-")); // crash-test sandboxes come and go
+  const teams = [...new Set(agents.map((agent) => agent.namespace))].sort();
+  const shown = agents.filter((agent) => team === "all" || agent.namespace === team);
 
   // A new trace lights up the edges it used for a few seconds.
   useEffect(() => {
@@ -72,55 +100,84 @@ export function Graph({ agents, pulse, selected }: { agents: Agent[]; pulse: Tra
 
   const { nodes, edges } = useMemo(() => {
     const now = Date.now();
-    const nodes: Node[] = tools.map((tool, index) => ({ id: `tool:${tool.name}`, type: "tool", position: { x: 0, y: index * 190 }, data: { tool } }));
-    const namespaces = [...new Set(agents.map((agent) => agent.namespace))].sort();
+    const classes = Object.fromEntries(tools.map((tool) => [tool.name, tool.classes]));
+    const used = new Set(shown.flatMap((agent) => (agent.spec.tools ?? []).map((tool) => tool.name)));
+    const visibleTools = team === "all" ? tools : tools.filter((tool) => used.has(tool.name));
+    const nodes: Node[] = visibleTools.map((tool, index) => ({ id: `tool:${tool.name}`, type: "tool", position: { x: 0, y: index * 210 }, data: { tool } }));
     const edges: Edge[] = [];
+    const namespaces = [...new Set(shown.map((agent) => agent.namespace))].sort();
     namespaces.forEach((namespace, column) => {
-      const members = agents.filter((agent) => agent.namespace === namespace);
+      const members = shown.filter((agent) => agent.namespace === namespace);
       members.forEach((agent, row) => {
         const id = `${agent.namespace}/${agent.name}`;
-        nodes.push({ id, type: "agent", position: { x: -380 - column * 300, y: row * 150 }, data: { agent }, selected: selected === `${agent.namespace}.${agent.name}` });
+        nodes.push({ id, type: "agent", position: { x: -400 - column * 330, y: row * 170 }, data: { agent, classes }, selected: selected === `${agent.namespace}.${agent.name}` });
         for (const tool of agent.spec.tools ?? []) {
           const edgeId = `use:${id}->${tool.name}`;
-          edges.push({ id: edgeId, source: id, target: `tool:${tool.name}`, animated: (hot[edgeId] ?? 0) > now, className: (hot[edgeId] ?? 0) > now ? "hot" : "" });
+          const isHot = (hot[edgeId] ?? 0) > now;
+          edges.push({ id: edgeId, source: id, target: `tool:${tool.name}`, animated: isHot, className: isHot ? "hot" : "" });
         }
         const patterns = (agent.spec.talksTo ?? []).map(globToRegex);
         for (const other of members) {
           if (other.name === agent.name || !patterns.some((pattern) => pattern.test(other.name))) continue;
           const edgeId = `talk:${id}->${other.name}`;
-          edges.push({ id: edgeId, source: id, target: `${namespace}/${other.name}`, animated: (hot[edgeId] ?? 0) > now, className: `talk ${(hot[edgeId] ?? 0) > now ? "hot" : ""}` });
+          const isHot = (hot[edgeId] ?? 0) > now;
+          edges.push({ id: edgeId, source: id, target: `${namespace}/${other.name}`, animated: isHot, className: `talk ${isHot ? "hot" : ""}` });
         }
       });
     });
     return { nodes, edges };
-  }, [agents, tools, hot, selected]);
+  }, [shown, tools, hot, selected, team]);
 
+  const running = agents.filter((agent) => agent.status.phase === "Running").length;
   const selectedAgent = agents.find((agent) => `${agent.namespace}.${agent.name}` === selected);
   return (
-    <div className="graph-page">
-      <div className="canvas">
-        {agents.length === 0 && (
-          <div className="empty">
-            No agents yet. <a href="#/create">Create one from a template</a>.
+    <div className="map">
+      <div className="map-main">
+        <div className="map-bar">
+          <h1>Agents</h1>
+          <p className="summary">
+            {snapshot ? `${running} of ${agents.length} running. ` : "Loading… "}
+            {pending > 0 ? <a href="#/approvals">{pending} {pending === 1 ? "action waits" : "actions wait"} for approval.</a> : "Nothing waits for approval."}
+          </p>
+          {teams.length > 1 && (
+            <div className="teams" role="group" aria-label="Show team">
+              {["all", ...teams].map((name) => (
+                <button key={name} aria-pressed={team === name} onClick={() => setTeam(name)}>{name === "all" ? "All teams" : name}</button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="canvas">
+          {snapshot && agents.length === 0 && (
+            <div className="empty">
+              <strong>No agents yet</strong>
+              <a href="#/create">Build one from a template</a>
+            </div>
+          )}
+          <ReactFlow
+            key={`${team}:${nodes.length}:${width}:${!!selected}`} // re-fit when agents come or go, the team changes, the window resizes, or the drawer opens
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodeClick={(_, node) => node.type === "agent" && go(`/graph/${node.id.replace("/", ".")}`)}
+            onPaneClick={() => go("/graph")}
+            nodesDraggable={false}
+            fitView
+            fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background gap={22} size={1.2} />
+            <Controls showInteractive={false} position="top-right" />
+          </ReactFlow>
+          <div className="legend" aria-label="Legend">
+            <div><i /> may use this tool</div>
+            <div><i className="talk" /> may message this agent</div>
+            <div><i className="hot" /> working right now</div>
+            <div><b /> a human approves</div>
           </div>
-        )}
-        <ReactFlow
-          key={nodes.length} // re-fit the view when agents arrive or leave
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodeClick={(_, node) => node.type === "agent" && go(`/graph/${node.id.replace("/", ".")}`)}
-          onPaneClick={() => go("/graph")}
-          nodesDraggable={false}
-          fitView
-          fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background gap={24} size={1} />
-          <Controls showInteractive={false} />
-        </ReactFlow>
+        </div>
       </div>
-      {selectedAgent && <AgentPanel key={selected} agent={selectedAgent} />}
+      {selectedAgent && <Drawer key={selected} agent={selectedAgent} />}
     </div>
   );
 }
@@ -130,10 +187,13 @@ type Detail = {
   warnings: { object: string; reason: string; message: string }[];
   traces: { id: string; message: string; status: string; tokens: number }[];
 };
-type ChatLine = { from: "you" | "agent" | "platform"; text: string; traceId?: string };
+type ChatLine = { from: "you" | "agent" | "platform"; text: string; traceId?: string; approval?: boolean };
 
-function AgentPanel({ agent }: { agent: Agent }) {
+function Drawer({ agent }: { agent: Agent }) {
   const path = `/agents/${agent.namespace}/${agent.name}`;
+  const canBuild = useCan("build");
+  const canChat = useCan("chat");
+  const [tab, setTab] = useState<"chat" | "overview" | "spec">(canChat ? "chat" : "overview");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [draft, setDraft] = useState("");
@@ -158,7 +218,7 @@ function AgentPanel({ agent }: { agent: Agent }) {
       const reply = await api<Reply>(`${path}/chat`, { method: "POST", json: { message, conversation_id: conversation } });
       const line: ChatLine =
         reply.status === "awaiting_approval"
-          ? { from: "platform", text: `Waiting for a human to approve ${reply.tool} ${JSON.stringify(reply.arguments)}.`, traceId: reply.trace_id }
+          ? { from: "platform", text: `Paused: ${reply.tool?.replace("__", ".")} needs a human approval.`, traceId: reply.trace_id, approval: true }
           : { from: reply.status === "answered" ? "agent" : "platform", text: reply.answer ?? reply.status, traceId: reply.trace_id };
       setLines((current) => [...current, line]);
     } catch (error) {
@@ -169,96 +229,101 @@ function AgentPanel({ agent }: { agent: Agent }) {
   }
 
   const stopped = (agent.spec.replicas ?? 1) === 0;
-  async function setReplicas(replicas: number) {
-    await api(path, { method: "PUT", json: { spec: { ...agent.spec, replicas } } });
-  }
+  const setReplicas = (replicas: number) => api(path, { method: "PUT", json: { spec: { ...agent.spec, replicas } } });
   async function remove() {
     if (!confirm(`Delete ${agent.name}? Its pods, keys and network rules are deleted too.`)) return;
     await api(path, { method: "DELETE" });
     go("/graph");
   }
+  const crash = agent.status.crashTest;
 
   return (
-    <aside className="panel" aria-label={`Agent ${agent.name}`}>
-      <header className="panel-head">
-        <div>
-          <h2>{agent.name}</h2>
-          <div className={`phase ${phaseClass(agent.status.phase)}`}>
-            <span className="dot" aria-hidden /> {agent.status.phase ?? "Pending"} in {agent.namespace}
-          </div>
-          {agent.status.message && <p className="error">{agent.status.message}</p>}
-          {agent.status.crashTest && (
-            <p className={agent.status.crashTest.passed ? "crash-badge passed" : "crash-badge not-passed"}>
-              Crash test: {agent.status.crashTest.score ?? "not run"}{agent.status.crashTest.passed ? ", passed" : ", deployed anyway"}
-            </p>
-          )}
-        </div>
-        <button className="close" onClick={() => go("/graph")} aria-label="Close panel">×</button>
-      </header>
-
-      <section className="chat">
-        <div className="lines" aria-live="polite">
-          {lines.length === 0 && <p className="hint">Send a message to try the agent.</p>}
-          {lines.map((line, index) => (
-            <div key={index} className={`line ${line.from}`}>
-              {line.text}
-              {line.traceId && <a href={`#/traces/${line.traceId}`}> trace</a>}
-              {line.from === "platform" && line.text.startsWith("Waiting") && <a href="#/approvals"> open approvals</a>}
-            </div>
-          ))}
-          {busy && <div className="line agent thinking">Working…</div>}
-        </div>
-        <form onSubmit={send}>
-          <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={stopped ? "Agent is stopped" : "Message"} disabled={stopped || busy} aria-label="Message to the agent" />
-          <button disabled={stopped || busy}>Send</button>
-        </form>
-      </section>
-
-      <section>
-        <h3>Controls</h3>
+    <aside className="drawer" aria-label={`Agent ${agent.name}`}>
+      <header className="drawer-head">
         <div className="row">
-          {stopped ? (
-            <button onClick={() => setReplicas(1)}>Start agent</button>
-          ) : (
-            <button className="danger" onClick={() => setReplicas(0)}>Stop agent</button>
-          )}
-          <button className="quiet" onClick={remove}>Delete</button>
+          <div>
+            <h2>{agent.name}</h2>
+            <span className={`status ${phaseClass(agent.status.phase)}`}>{agent.status.phase ?? "Pending"} in {agent.namespace}</span>
+          </div>
+          <span className="spacer" />
+          {canBuild && (stopped
+            ? <button className="secondary" onClick={() => setReplicas(1)}>Start</button>
+            : <button className="secondary" onClick={() => setReplicas(0)}>Stop</button>)}
+          {canBuild && <button className="secondary" onClick={remove} aria-label="Delete agent">Delete</button>}
+          <button className="close" onClick={() => go("/graph")} aria-label="Close">×</button>
         </div>
-      </section>
-
-      <section>
-        <h3>Pods</h3>
-        {detail?.pods.length ? (
-          <ul className="plain">
-            {detail.pods.map((pod) => (
-              <li key={pod.name}>
-                {pod.name}: {pod.ready ? "ready" : pod.phase}, {pod.restarts} restarts
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="hint">{stopped ? "No pods: the agent is stopped." : "Starting…"}</p>
+        {agent.status.message && <p className="notice bad">{agent.status.message}</p>}
+        {crash && (
+          <p className={`notice ${crash.passed ? "good" : "human"}`}>
+            {crash.passed ? `Passed its crash test with ${crash.score}.` : `Deployed without passing the crash test (score ${crash.score ?? "none"}).`}
+          </p>
         )}
-        {detail?.warnings.map((warning, index) => (
-          <p key={index} className="error">{warning.reason}: {warning.message}</p>
-        ))}
-      </section>
+      </header>
+      <div className="tabs" role="tablist">
+        {canChat && <button role="tab" aria-selected={tab === "chat"} onClick={() => setTab("chat")}>Chat</button>}
+        <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
+        <button role="tab" aria-selected={tab === "spec"} onClick={() => setTab("spec")}>Spec</button>
+      </div>
 
-      <section>
-        <h3>Recent requests</h3>
-        <ul className="plain">
-          {detail?.traces.map((trace) => (
-            <li key={trace.id}>
-              <a href={`#/traces/${trace.id}`}>{trace.message.slice(0, 60)}</a> ({trace.status.replace("_", " ")})
-            </li>
-          ))}
-        </ul>
-      </section>
+      {tab === "chat" && (
+        <section className="chat">
+          <div className="lines" aria-live="polite">
+            {lines.length === 0 && <p className="muted small">Send a message to try {agent.name}. Anything sensitive pauses for an approval.</p>}
+            {lines.map((line, index) => (
+              <div key={index} className={`line ${line.from}`}>
+                {line.text}
+                {line.approval && <a href="#/approvals">Open approvals</a>}
+                {line.traceId && <a href={`#/traces/${line.traceId}`}>Trace</a>}
+              </div>
+            ))}
+            {busy && <div className="line agent thinking">Working…</div>}
+          </div>
+          <form onSubmit={send}>
+            <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={stopped ? "The agent is stopped" : `Message ${agent.name}`} disabled={stopped || busy} aria-label="Message to the agent" />
+            <button disabled={stopped || busy || !draft.trim()}>Send</button>
+          </form>
+        </section>
+      )}
 
-      <section>
-        <h3>Spec</h3>
-        <pre className="yaml">{YAML.stringify(agent.spec)}</pre>
-      </section>
+      {tab === "overview" && (
+        <div className="tab">
+          <dl className="facts">
+            <dt>Model</dt><dd className="mono">{agent.spec.model}</dd>
+            <dt>Tokens today</dt><dd>{agent.tokens_today.toLocaleString()} of {(agent.spec.budget?.tokensPerDay ?? DEFAULT_TOKENS_PER_DAY).toLocaleString()}</dd>
+            <dt>Steps per request</dt><dd>at most {agent.spec.budget?.maxStepsPerRequest ?? 12}</dd>
+            <dt>May message</dt><dd>{agent.spec.talksTo?.join(", ") || "no other agents"}</dd>
+          </dl>
+          <section>
+            <h3>Pods</h3>
+            {detail?.pods.length ? (
+              <ul className="list">
+                {detail.pods.map((pod) => (
+                  <li key={pod.name}><span className="mono">{pod.name}</span><span className="muted">{pod.ready ? "ready" : pod.phase}{pod.restarts ? `, ${pod.restarts} restarts` : ""}</span></li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted small">{stopped ? "None: the agent is stopped." : "Starting…"}</p>
+            )}
+            {detail?.warnings.map((warning, index) => <p key={index} className="notice bad">{warning.reason}: {warning.message}</p>)}
+          </section>
+          <section>
+            <h3>Recent requests</h3>
+            {detail?.traces.length ? (
+              <ul className="list">
+                {detail.traces.map((trace) => (
+                  <li key={trace.id}><a href={`#/traces/${trace.id}`}>{trace.message.slice(0, 56)}</a><span className="muted">{trace.status.replace("_", " ")}</span></li>
+                ))}
+              </ul>
+            ) : <p className="muted small">No requests yet.</p>}
+          </section>
+        </div>
+      )}
+
+      {tab === "spec" && (
+        <div className="tab">
+          <pre className="yaml">{YAML.stringify(agent.spec)}</pre>
+        </div>
+      )}
     </aside>
   );
 }
