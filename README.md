@@ -9,5 +9,31 @@ The pitch: the agent proposes, the platform enforces.
 Showcase app on top: **Scam City**, a simulated town where AI scammers attack an AI bank assistant
 (Capital One Nessie for accounts, SerpApi for real prices).
 
-Build phases: 0 setup, 1 agent runtime, 2 operator, 3 tools, 4 guardrails, 5 platform API + UI,
-6 Scam City, 7 AWS, 8 video + Devpost.
+## What's here
+
+| Folder | What |
+|---|---|
+| `runtime/` | the agent runtime every agent pod runs: model-and-tool loop, policy, approvals, budgets, traces |
+| `operator/` | kopf operator: turns `Agent` objects into ServiceAccount, Secret, Deployment, Service, NetworkPolicy |
+| `tools/` | MCP tool servers: Nessie bank, SerpApi search |
+| `deploy/crds/` | the `Agent` and `Tool` kinds |
+| `deploy/platform/` | Postgres, operator, tool servers, tool registry |
+| `deploy/examples/` | a research agent and a bank assistant |
+
+## Run it locally (kind)
+
+```bash
+# images, built and loaded into the kind cluster "f1"
+docker build -t agent-runtime:dev runtime && docker build -t platform-tools:dev tools && docker build -t agent-operator:dev operator
+kind load docker-image agent-runtime:dev platform-tools:dev agent-operator:dev --name f1
+
+kubectl --context kind-f1 apply -f deploy/crds/
+uv run --no-project --env-file .env python deploy/sync_secrets.py      # keys -> Secrets, never printed
+kubectl --context kind-f1 apply -f deploy/platform/platform.yaml -f deploy/platform/tools.yaml
+kubectl --context kind-f1 apply -f deploy/examples/
+
+kubectl --context kind-f1 get agents -A
+uv run --project runtime python deploy/e2e_chunk_a.py                  # 16 end-to-end checks
+```
+
+Offline checks: `cd runtime && uv run python test_agent.py` · `cd tools && NESSIE_MOCK=1 uv run python test_nessie.py`

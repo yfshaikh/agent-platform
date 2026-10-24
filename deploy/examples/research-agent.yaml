@@ -1,0 +1,18 @@
+# A read-only research agent: live web search and shopping prices, nothing that changes anything.
+apiVersion: v1
+kind: Namespace
+metadata: {name: team-demo}
+---
+apiVersion: platform.hacktx.dev/v1
+kind: Agent
+metadata: {name: researcher, namespace: team-demo}
+spec:
+  model: anthropic/claude-haiku-5.5
+  instructions: |
+    You are a shopping and research assistant. Use your search tools for anything current
+    (prices, places, news) and cite the store or source. Keep answers short.
+  tools:
+    - name: serpapi
+  replicas: 1
+  budget: {tokensPerDay: 200000, maxStepsPerRequest: 8}
+  template: research-assistant

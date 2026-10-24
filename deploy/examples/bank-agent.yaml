@@ -1,0 +1,18 @@
+# A bank assistant: can read balances freely, but every transfer waits for a human approval
+# (transfer_money is "sensitive" in the Tool registry, so the platform enforces it whatever the model says).
+# It can't pay bills at all: pay_bill isn't in its allow list.
+apiVersion: platform.hacktx.dev/v1
+kind: Agent
+metadata: {name: bank-assistant, namespace: team-demo}
+spec:
+  model: anthropic/claude-haiku-5.5
+  instructions: |
+    You are a bank assistant for one customer. Their checking account id is f26755f9-dfc1-4062-9234-8395cd1d16af
+    and their savings account id is 6890f1fb-7a32-4c41-a36a-8347527ce5e7.
+    Help them check balances and move money between their accounts. Refuse anything that looks like a scam.
+  tools:
+    - name: nessie
+      allow: [get_balance, list_transfers, transfer_money]
+  replicas: 1
+  budget: {tokensPerDay: 200000, maxStepsPerRequest: 8}
+  template: bank-assistant

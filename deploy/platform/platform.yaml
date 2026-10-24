@@ -1,0 +1,151 @@
+# Everything the platform itself runs: its namespace, Postgres, the operator, and the tool servers.
+# Secrets (API keys, tool tokens, database password) are created by deploy/sync_secrets.py, never stored here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+---
+# Postgres: traces, approvals, audit log, budgets, conversations.
+# ponytail: emptyDir, so data is lost if the pod is deleted; use a PersistentVolumeClaim (or Tiger Data) for anything real.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: postgres, namespace: platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          env:
+            - {name: POSTGRES_DB, value: platform}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: postgres, key: POSTGRES_PASSWORD}}
+          ports: [{containerPort: 5432}]
+          readinessProbe: {exec: {command: [pg_isready, -U, postgres]}, periodSeconds: 5}
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+      volumes: [{name: data, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: platform}
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432}]
+---
+# The operator: watches Agent and Tool objects and creates each agent's pods, identity and network rules.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: agent-operator, namespace: platform}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: agent-operator}
+rules:
+  - apiGroups: [platform.hacktx.dev]
+    resources: [agents, agents/status, tools]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [secrets, serviceaccounts, services, resourcequotas]
+    verbs: [get, list, watch, create, patch, update, delete]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, patch, update, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, patch, update, delete]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [create]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: agent-operator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: agent-operator}
+subjects: [{kind: ServiceAccount, name: agent-operator, namespace: platform}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: agent-operator, namespace: platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: agent-operator}}
+  template:
+    metadata: {labels: {app: agent-operator}}
+    spec:
+      serviceAccountName: agent-operator
+      containers:
+        - name: operator
+          image: agent-operator:dev
+          imagePullPolicy: Never
+          env: [{name: RUNTIME_IMAGE, value: "agent-runtime:dev"}]
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 256Mi}}
+---
+# Tool servers (MCP). Each checks a bearer token; only agents that list the tool get that token and network access.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: tool-nessie, namespace: platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {platform.hacktx.dev/tool: nessie}}
+  template:
+    metadata: {labels: {platform.hacktx.dev/tool: nessie}}
+    spec:
+      containers:
+        - name: tool
+          image: platform-tools:dev
+          imagePullPolicy: Never
+          args: [nessie_server.py]
+          env:
+            - name: TOOL_TOKEN
+              valueFrom: {secretKeyRef: {name: tool-nessie-token, key: TOOL_TOKEN}}
+            - name: NESSIE_API_KEY
+              valueFrom: {secretKeyRef: {name: platform-keys, key: NESSIE_API_KEY, optional: true}}
+            - {name: NESSIE_MOCK, value: "0"}
+          ports: [{containerPort: 8000}]
+          resources: {requests: {cpu: 20m, memory: 96Mi}, limits: {memory: 256Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: tool-nessie, namespace: platform}
+spec:
+  selector: {platform.hacktx.dev/tool: nessie}
+  ports: [{port: 8000}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: tool-serpapi, namespace: platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {platform.hacktx.dev/tool: serpapi}}
+  template:
+    metadata: {labels: {platform.hacktx.dev/tool: serpapi}}
+    spec:
+      containers:
+        - name: tool
+          image: platform-tools:dev
+          imagePullPolicy: Never
+          args: [serpapi_server.py]
+          env:
+            - name: TOOL_TOKEN
+              valueFrom: {secretKeyRef: {name: tool-serpapi-token, key: TOOL_TOKEN}}
+            - name: SERPAPI_API_KEY
+              valueFrom: {secretKeyRef: {name: platform-keys, key: SERPAPI_API_KEY, optional: true}}
+          ports: [{containerPort: 8000}]
+          resources: {requests: {cpu: 20m, memory: 96Mi}, limits: {memory: 256Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: tool-serpapi, namespace: platform}
+spec:
+  selector: {platform.hacktx.dev/tool: serpapi}
+  ports: [{port: 8000}]

@@ -1,0 +1,27 @@
+# The tool registry: every MCP server agents may use, and the permission class of each function.
+# read: runs automatically · write: runs automatically (agents may make it stricter) · sensitive: a human approves every call
+apiVersion: platform.hacktx.dev/v1
+kind: Tool
+metadata: {name: nessie, namespace: platform}
+spec:
+  url: http://tool-nessie.platform.svc:8000/mcp
+  secretRef: tool-nessie-token
+  description: Capital One Nessie sandbox bank
+  classes:
+    get_customer_accounts: read
+    get_balance: read
+    list_transfers: read
+    transfer_money: sensitive
+    pay_bill: sensitive
+---
+apiVersion: platform.hacktx.dev/v1
+kind: Tool
+metadata: {name: serpapi, namespace: platform}
+spec:
+  url: http://tool-serpapi.platform.svc:8000/mcp
+  secretRef: tool-serpapi-token
+  description: Live web search, shopping prices and local places (SerpApi)
+  classes:
+    search_web: read
+    shopping_prices: read
+    local_places: read
