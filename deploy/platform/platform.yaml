@@ -217,6 +217,9 @@ rules:
     resources: [agents]
     verbs: [get, list, watch, create, patch, update, delete]
   - apiGroups: [platform.hacktx.dev]
+    resources: [agents/status]
+    verbs: [patch]  # records crash test results on the agent
+  - apiGroups: [platform.hacktx.dev]
     resources: [tools]
     verbs: [get, list]
   - apiGroups: [""]
@@ -224,7 +227,7 @@ rules:
     verbs: [get, list]
   - apiGroups: [""]
     resources: [namespaces]
-    verbs: [get, list, create, delete]  # delete: only Scam City towns (checked in api/town.py)
+    verbs: [get, list, create, delete]  # delete: only Scam City towns and crash-test sandboxes (checked in code)
   - apiGroups: [""]
     resources: [secrets]
     resourceNames: [agent-caller-token]  # to call agents; it can't read any other Secret

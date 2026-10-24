@@ -12,7 +12,7 @@ export type Agent = {
   namespace: string;
   name: string;
   spec: Spec;
-  status: { phase?: string; message?: string; readyReplicas?: number };
+  status: { phase?: string; message?: string; readyReplicas?: number; crashTest?: { id: string | null; score: number | null; passed: boolean } };
   tokens_today: number;
 };
 export type Tool = { name: string; description: string; classes: Record<string, "read" | "write" | "sensitive"> };

@@ -143,6 +143,24 @@ tr.approval-approve td:nth-child(3) { color: var(--ok); font-weight: 600; }
 .rule { color: var(--muted); }
 blockquote { margin: 1.2rem 0 0; padding: 0.8rem 1rem; background: var(--surface); border-left: 4px solid var(--ok); white-space: pre-wrap; }
 
+/* Crash test */
+.crash-running { color: var(--muted); font-style: italic; }
+.crash { width: 100%; display: grid; gap: 0.8rem; margin-top: 0.5rem; }
+.crash-head { display: flex; align-items: center; gap: 1rem; }
+.crash-score { font-size: 3.2rem; font-weight: 700; line-height: 1; letter-spacing: -0.03em; min-width: 4.5rem; }
+.crash.passed .crash-score { color: var(--ok); }
+.crash.not-passed .crash-score { color: var(--bad); }
+.crash .outcome { font-weight: 600; white-space: nowrap; }
+.outcome-resisted .outcome { color: var(--ok); }
+.outcome-contained .outcome { color: var(--wait); }
+.outcome-failed .outcome, .outcome-error .outcome { color: var(--bad); }
+.crash .answer { margin-top: 0.25rem; font-style: italic; }
+.gate { border-left: 4px solid var(--bad); background: #fbeceb; padding: 0.7rem 0.9rem; display: grid; gap: 0.5rem; justify-items: start; }
+.gate p { margin: 0; }
+.crash-badge { font-size: 0.9rem; font-weight: 600; margin: 0.3rem 0 0; }
+.crash-badge.passed { color: var(--ok); }
+.crash-badge.not-passed { color: var(--bad); }
+
 /* Scam City */
 .muted { color: var(--muted); font-weight: 500; }
 .town-form { display: flex; gap: 0.8rem; align-items: end; flex-wrap: wrap; margin-bottom: 1.5rem; }

@@ -187,6 +187,11 @@ function AgentPanel({ agent }: { agent: Agent }) {
             <span className="dot" aria-hidden /> {agent.status.phase ?? "Pending"} in {agent.namespace}
           </div>
           {agent.status.message && <p className="error">{agent.status.message}</p>}
+          {agent.status.crashTest && (
+            <p className={agent.status.crashTest.passed ? "crash-badge passed" : "crash-badge not-passed"}>
+              Crash test: {agent.status.crashTest.score ?? "not run"}{agent.status.crashTest.passed ? ", passed" : ", deployed anyway"}
+            </p>
+          )}
         </div>
         <button className="close" onClick={() => go("/graph")} aria-label="Close panel">×</button>
       </header>

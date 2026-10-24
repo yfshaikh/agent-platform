@@ -95,9 +95,9 @@ async def lifespan(app):
         kubernetes.config.load_kube_config()
     kube["custom"], kube["core"] = kubernetes.client.CustomObjectsApi(), kubernetes.client.CoreV1Api()
     state["db"] = await asyncpg.create_pool(os.environ["ADMIN_DATABASE_URL"], min_size=1, max_size=5, init=setup_connection)
-    import town  # imported here because town.py imports helpers from this module
+    import crash, town  # imported here because these modules import helpers from this one
     async with state["db"].acquire() as connection:
-        await connection.execute(SCHEMA + town.SCHEMA)
+        await connection.execute(SCHEMA + town.SCHEMA + crash.SCHEMA)
         password_sql = await connection.fetchval("select format('alter role agent_runtime password %L', $1::text)",
                                                  os.environ["AGENT_DB_PASSWORD"])
         await connection.execute(password_sql)
@@ -221,11 +221,15 @@ class NewAgent(BaseModel):
     namespace: str = Field(pattern=NAME_PATTERN)
     name: str = Field(pattern=NAME_PATTERN)
     spec: dict
+    crash_test_id: str | None = None  # a passing crash test of this exact spec (required if it can move money)
+    deploy_anyway: bool = False  # skip that requirement; audited
 
 
 class AgentSpec(BaseModel):
     """Body of PUT /agents/{ns}/{name}: the full new spec."""
     spec: dict
+    crash_test_id: str | None = None
+    deploy_anyway: bool = False
 
 
 def manifest(namespace, name, spec):
@@ -233,14 +237,18 @@ def manifest(namespace, name, spec):
     return {"apiVersion": f"{GROUP}/{VERSION}", "kind": "Agent", "metadata": {"name": name, "namespace": namespace}, "spec": spec}
 
 
-async def check_target(namespace, name=None):
+async def check_target(namespace, name=None, read_only=False):
     """Agents live only in platform-managed namespaces (never next to system pods or the platform's own secrets),
-    and names must be plain Kubernetes names (they become hostnames the API calls)."""
+    and names must be plain Kubernetes names (they become hostnames the API calls). read_only allows reading and chatting
+    in Scam City towns; changing a town's agents goes through /api/towns."""
     if not re.fullmatch(NAME_PATTERN, namespace) or (name is not None and not re.fullmatch(NAME_PATTERN, name)):
         raise HTTPException(400, "namespace and name must be lowercase letters, digits and dashes")
     found = await k8s(kube["core"].read_namespace, namespace)
-    if (found.metadata.labels or {}).get(MANAGED_LABEL) != "true":
+    labels = found.metadata.labels or {}
+    if labels.get(MANAGED_LABEL) != "true":
         raise HTTPException(400, f"namespace {namespace!r} isn't managed by the platform")
+    if labels.get("platform.hacktx.dev/simulation") == "true" and not read_only:
+        raise HTTPException(400, "Scam City towns are managed through /api/towns")
 
 
 async def tool_registry():
@@ -281,7 +289,7 @@ async def list_agents(actor=Depends(user)):
 @api.get("/agents/{namespace}/{name}")
 async def get_agent(namespace: str, name: str, actor=Depends(user)):
     """One agent: spec, status, pods, recent warnings, recent traces, pending approvals."""
-    await check_target(namespace, name)
+    await check_target(namespace, name, read_only=True)
     agent = await k8s(kube["custom"].get_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name)
     pods = await k8s(kube["core"].list_namespaced_pod, namespace, label_selector=f"platform.hacktx.dev/agent={name}")
     events = await k8s(kube["core"].list_namespaced_event, namespace, field_selector="type=Warning")
@@ -311,9 +319,14 @@ async def create_agent(body: NewAgent, actor=Depends(user)):
             raise
         await k8s(kube["core"].create_namespace, {"metadata": {"name": body.namespace, "labels": {MANAGED_LABEL: "true"}}})
     await check_target(body.namespace, body.name)
+    import crash  # imported here because crash.py imports helpers from this module
+    crash_test = await crash.gate(body.spec, body.crash_test_id, body.deploy_anyway, actor, f"{body.namespace}/{body.name}")
     created = await k8s(kube["custom"].create_namespaced_custom_object, GROUP, VERSION, body.namespace, "agents",
                         manifest(body.namespace, body.name, body.spec))
-    await audit(actor, "agent_created", f"{body.namespace}/{body.name}", {"spec": body.spec})
+    if crash_test:  # show the result on the agent (kubectl get agent -o yaml, and the console)
+        await k8s(kube["custom"].patch_namespaced_custom_object_status, GROUP, VERSION, body.namespace, "agents", body.name,
+                  {"status": {"crashTest": crash_test}})
+    await audit(actor, "agent_created", f"{body.namespace}/{body.name}", {"spec": body.spec, "crash_test": crash_test})
     return {"namespace": body.namespace, "name": body.name, "spec": created["spec"]}
 
 
@@ -322,6 +335,9 @@ async def update_agent(namespace: str, name: str, body: AgentSpec, actor=Depends
     """Replace an Agent's spec (the console's kill switch sends the same spec with replicas: 0)."""
     await check_target(namespace, name)
     agent = await k8s(kube["custom"].get_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name)
+    import crash
+    if crash.spec_hash(body.spec) != crash.spec_hash(agent["spec"]):  # stopping or scaling doesn't need a new test
+        await crash.gate(body.spec, body.crash_test_id, body.deploy_anyway, actor, f"{namespace}/{name}")
     before, agent["spec"] = agent["spec"], body.spec
     await k8s(kube["custom"].replace_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name, agent)
     stopped = body.spec.get("replicas") == 0 and before.get("replicas", 1) != 0
@@ -420,7 +436,7 @@ class ChatMessage(BaseModel):
 @api.post("/agents/{namespace}/{name}/chat")
 async def chat(namespace: str, name: str, body: ChatMessage, actor=Depends(user)):
     """Send a message to an agent and return its reply (or its request for approval)."""
-    await check_target(namespace, name)
+    await check_target(namespace, name, read_only=True)
     status, reply = await call_agent(namespace, name, "/chat", body.model_dump())
     return JSONResponse(reply, status_code=status)
 
@@ -526,9 +542,11 @@ async def events(request: Request, actor=Depends(user)):
 
 app.include_router(api)
 
-from town import router as town_router  # noqa: E402 (needs everything above; town.py imports from this module)
+from crash import router as crash_router  # noqa: E402 (these need everything above; they import from this module)
+from town import router as town_router  # noqa: E402
 
 app.include_router(town_router)
+app.include_router(crash_router)
 
 
 @app.get("/healthz")
