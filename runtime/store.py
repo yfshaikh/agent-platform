@@ -96,5 +96,6 @@ class Store:
         """Store a conversation's messages (without the system prompt)."""
         await self.pool.execute(
             "insert into conversations (id, agent, namespace, messages) values ($1,$2,$3,$4) "
-            "on conflict (id) do update set messages=excluded.messages, updated_at=now()",
+            "on conflict (id) do update set messages=excluded.messages, updated_at=now() "
+            "where conversations.agent=excluded.agent and conversations.namespace=excluded.namespace",  # no overwriting another agent's conversation
             conversation_id, agent, namespace, json.dumps(messages))
