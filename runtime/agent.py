@@ -10,6 +10,7 @@ The loop, per request:
 Policy lives here, in code, not in the prompt: a tricked model can ask for anything,
 but only allowed calls run, and "human" calls pause until someone approves them.
 """
+import base64
 import hmac
 import json
 import logging
@@ -17,9 +18,9 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Literal
 
 import httpx
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import FastAPI, Header, HTTPException
 from mcp import ClientSession
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
@@ -41,6 +42,7 @@ TALKS_TO = json.loads(os.environ.get("TALKS_TO", "[]"))  # agent names this one 
 MAX_STEPS = int(os.environ.get("MAX_STEPS", "12"))
 TOKENS_PER_DAY = int(os.environ.get("TOKENS_PER_DAY", "2000000"))
 CALLER_TOKEN = os.environ.get("AGENT_CALLER_TOKEN", "")  # empty only when running locally
+APPROVAL_PUBLIC_KEY = os.environ.get("APPROVAL_PUBLIC_KEY", "")  # verifies approvals signed by the platform API
 SIMULATION = os.environ.get("SIMULATION") == "1"  # Scam City towns may loosen approvals; nowhere else can
 AGENT_URL_TEMPLATE = os.environ.get("AGENT_URL_TEMPLATE", "http://agent-{name}.{namespace}.svc/chat")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -91,9 +93,10 @@ async def list_tools(server):
     ]
 
 
-async def call_tool(tool, arguments):
-    """Run one tool on its MCP server and return its text result."""
-    async with create_mcp_http_client(headers=server_headers(tool["server"])) as http_client:
+async def call_tool(tool, arguments, grant=None):
+    """Run one tool on its MCP server and return its text result. A sensitive call carries its signed approval grant."""
+    headers = server_headers(tool["server"]) | ({"X-Approval-Grant": grant} if grant else {})
+    async with create_mcp_http_client(headers=headers) as http_client:
         async with streamable_http_client(tool["server"]["url"], http_client=http_client) as (read_stream, write_stream, *_):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
@@ -248,10 +251,24 @@ class ChatRequest(BaseModel):
 
 
 class ResumeRequest(BaseModel):
-    """Body of POST /resume: a human's decision on one paused tool call."""
-    approval_id: str
-    decision: Literal["approve", "deny"]
-    decided_by: str = "unknown"
+    """Body of POST /resume: a human's decision on one paused tool call, signed by the platform API."""
+    grant: str
+
+
+def verify_grant(grant):
+    """Claims of a platform-signed approval grant, or None if it's forged, malformed or expired.
+
+    The API signs with its private key; agents and tool servers only hold the public key, so they can check a grant
+    but never make one. (Same check as tools/common.py; the two images don't share code.)
+    """
+    try:
+        body, signature = grant.split(".")
+        public_key = Ed25519PublicKey.from_public_bytes(base64.urlsafe_b64decode(APPROVAL_PUBLIC_KEY))
+        public_key.verify(base64.urlsafe_b64decode(signature), body.encode())
+        claims = json.loads(base64.urlsafe_b64decode(body))
+    except Exception:  # bad base64, bad signature, bad JSON: all just "not a valid grant"
+        return None
+    return claims if claims.get("exp", 0) > time.time() else None
 
 
 def check_caller(authorization):
@@ -276,7 +293,10 @@ async def advance(state):
 
     async def run_tool(tool, arguments):
         """Dispatch to the built-in messaging tool or an MCP server."""
-        return await send_message(arguments, depth) if tool.get("builtin") else await call_tool(tool, arguments)
+        if tool.get("builtin"):
+            return await send_message(arguments, depth)
+        grant = state["grants"].pop(state["queue"][0]["id"], None)  # run_loop always runs the head of the queue
+        return await call_tool(tool, arguments, grant)
 
     async def before_model():
         """Stop when today's token budget is used up."""
@@ -323,7 +343,7 @@ async def chat(request: ChatRequest, authorization: str | None = Header(None), x
     history = await store.load_conversation(request.conversation_id, AGENT_NAME, NAMESPACE) if store and request.conversation_id else []
     state = {
         "trace_id": uuid.uuid4().hex[:12], "message": request.message, "conversation_id": request.conversation_id,
-        "depth": x_message_depth, "steps": [], "queue": [], "decisions": {}, "tokens": 0, "model_calls": 0,
+        "depth": x_message_depth, "steps": [], "queue": [], "decisions": {}, "grants": {}, "tokens": 0, "model_calls": 0,
         "messages": [{"role": "system", "content": INSTRUCTIONS}, *history, {"role": "user", "content": request.message}],
     }
     return await advance(state)
@@ -331,16 +351,22 @@ async def chat(request: ChatRequest, authorization: str | None = Header(None), x
 
 @app.post("/resume")
 async def resume(request: ResumeRequest, authorization: str | None = Header(None)):
-    """Apply a human's decision to a paused request and continue it. Each approval works once, for exactly the saved call."""
+    """Apply a human's decision to a paused request and continue it. Each approval works once, for exactly the saved call.
+
+    The decision and who made it come from the signed grant, never from the caller (the platform API audits it).
+    """
     check_caller(authorization)
     if store is None:
         raise HTTPException(503, "approvals need a database")
-    state = await store.take_approval(request.approval_id, AGENT_NAME, NAMESPACE, request.decision, request.decided_by)
+    claims = verify_grant(request.grant)
+    if not claims or (claims.get("agent"), claims.get("namespace")) != (AGENT_NAME, NAMESPACE):
+        raise HTTPException(403, "missing, expired or forged approval grant")
+    state = await store.take_approval(claims["approval_id"], AGENT_NAME, NAMESPACE, claims["decision"], claims["decided_by"])
     if state is None:
         raise HTTPException(404, "no pending approval with that id")
-    state["decisions"][state["queue"][0]["id"]] = request.decision
-    await store.audit(request.decided_by, f"approval_{request.decision}", f"{NAMESPACE}/{AGENT_NAME}",
-                      {"approval_id": request.approval_id})
+    call_id = state["queue"][0]["id"]
+    state["decisions"][call_id] = claims["decision"]
+    state.setdefault("grants", {})[call_id] = request.grant  # the tool server checks it again before moving money
     return await advance(state)
 
 

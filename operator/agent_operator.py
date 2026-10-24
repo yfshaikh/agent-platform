@@ -13,6 +13,7 @@ Run in the cluster (deploy/platform/platform.yaml) or locally: uv run kopf run a
 import base64
 import fnmatch
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -118,9 +119,12 @@ def ensure_namespace_basics(namespace):
     """Per namespace, once: a ResourceQuota and the caller token every agent there checks on /chat."""
     apply({"apiVersion": "v1", "kind": "ResourceQuota",
            "metadata": {"name": "agent-quota", "namespace": namespace}, "spec": {"hard": DEFAULT_QUOTA}})
-    if not read_secret(namespace, "agent-caller-token"):
-        apply({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "agent-caller-token", "namespace": namespace},
-               "data": {"AGENT_CALLER_TOKEN": encode(secrets.token_urlsafe(32))}})
+    try:  # create-if-missing without reading it: the operator may write Secrets in agent namespaces but not read them
+        clients["core"].create_namespaced_secret(namespace, {
+            "metadata": {"name": "agent-caller-token"}, "data": {"AGENT_CALLER_TOKEN": encode(secrets.token_urlsafe(32))}})
+    except kubernetes.client.ApiException as error:
+        if error.status != 409:  # 409 = it already exists, which is fine
+            raise
 
 
 def resolve_talks_to(agent, siblings):
@@ -138,7 +142,11 @@ def build_objects(agent, tools, siblings_by_name, simulation):
     owner = owner_reference(agent)
     platform_keys = read_secret(PLATFORM_NAMESPACE, "platform-keys")
 
-    secret_data = {key: platform_keys[key] for key in ("OPENROUTER_API_KEY", "DATABASE_URL") if key in platform_keys}
+    secret_data = {key: platform_keys[key] for key in ("OPENROUTER_API_KEY", "DATABASE_URL", "APPROVAL_PUBLIC_KEY")
+                   if key in platform_keys}
+    if "AGENT_KEY_MASTER" in platform_keys:  # this agent's own key for stamping approval requests (the API derives the same)
+        master = base64.b64decode(platform_keys["AGENT_KEY_MASTER"])
+        secret_data["AGENT_SIGNING_KEY"] = encode(hmac.new(master, f"{namespace}/{name}".encode(), hashlib.sha256).hexdigest())
     tool_servers = []
     for entry in spec.get("tools", []):
         tool = tools[entry["name"]]

@@ -14,6 +14,7 @@ import httpx
 
 CONTEXT = "kind-f1"
 NAMESPACE = "team-demo"
+PROBE = f"probe-{int(time.time()) % 100000}"  # fresh name per run: daily token budgets persist in Postgres
 results = []
 
 
@@ -27,7 +28,7 @@ def kubectl(*arguments, stdin=None, check=True):
 
 def record(name, passed, detail=""):
     """Print and remember one check's result."""
-    results.append(passed)
+    results.append(bool(passed))
     print(f"{'PASS' if passed else 'FAIL'}  {name}" + (f"  ({detail})" if detail else ""), flush=True)
 
 
@@ -114,31 +115,17 @@ def main():
     status, _ = researcher.post("/chat", {"message": "hi"}, headers={"Authorization": "Bearer wrong"})
     record("agent rejects callers without the caller token", status == 401, f"HTTP {status}")
 
-    # 2. A sensitive tool pauses for a human, runs once on approval, and the approval can't be reused.
+    # 2. A sensitive tool pauses for a human. (Approving now needs a grant signed by the platform API: see e2e_chunk_b.py.)
     bank = Agent("bank-assistant", token)
     status, paused = bank.post("/chat", {"message": "Please move $20 from my checking to my savings account."})
     record("transfer pauses for human approval", paused.get("status") == "awaiting_approval" and paused.get("tool") == "nessie__transfer_money",
            f"status {paused.get('status')}, arguments {paused.get('arguments')}")
-    if paused.get("approval_id"):
-        status, resumed = bank.post("/resume", {"approval_id": paused["approval_id"], "decision": "approve", "decided_by": "e2e-test"})
-        transfer = [step for step in tool_steps(resumed) if step["name"] == "nessie__transfer_money"]
-        record("approved transfer runs exactly once and completes", len(transfer) == 1 and '"completed"' in transfer[0]["result"],
-               transfer[0]["result"][:120] if transfer else resumed.get("detail"))
-        status, _ = bank.post("/resume", {"approval_id": paused["approval_id"], "decision": "approve", "decided_by": "e2e-test"})
-        record("an approval can't be used twice", status == 404, f"HTTP {status}")
-    status, denied = bank.post("/chat", {"message": "Move $5 from checking to savings."})
-    if denied.get("approval_id"):
-        status, after_deny = bank.post("/resume", {"approval_id": denied["approval_id"], "decision": "deny", "decided_by": "e2e-test"})
-        results_text = [step["result"] for step in tool_steps(after_deny)]
-        record("denied transfer never runs", "the user denied this action" in results_text, f"tool results {results_text}")
-    else:
-        record("denied transfer never runs", False, f"did not pause: {denied.get('status')}")
 
     # 3. Policy, budgets and messaging with the zero-cost fake model (deterministic).
-    apply_agent("probe", {"model": "fake", "instructions": "test", "tools": [{"name": "nessie", "allow": ["get_balance"]}],
+    apply_agent(PROBE, {"model": "fake", "instructions": "test", "tools": [{"name": "nessie", "allow": ["get_balance"]}],
                           "talksTo": ["researcher"], "budget": {"tokensPerDay": 450}})
-    wait_for_agent("probe")
-    probe = Agent("probe", token)
+    wait_for_agent(PROBE)
+    probe = Agent(PROBE, token)
     status, trace = probe.post("/chat", {"message": 'CALL nessie__transfer_money {"from_account_id":"a","to_account_id":"b","amount":1,"description":"x"}'})
     record("tool outside the allow list is refused", tool_steps(trace)[0]["result"].startswith("refused: nessie__transfer_money is not one of your tools"),
            tool_steps(trace)[0]["result"][:80])
@@ -164,14 +151,14 @@ def main():
     record("operator rejects auto-approving a sensitive tool", status.get("phase") == "Failed", status.get("message", "")[:100])
 
     # 6. Kill switch and cleanup: replicas 0 stops it; deleting the Agent deletes everything it owned.
-    kubectl("patch", "agent", "probe", "-n", NAMESPACE, "--type", "merge", "-p", '{"spec":{"replicas":0}}')
-    status = wait_for_agent("probe", "Stopped", timeout=60)
+    kubectl("patch", "agent", PROBE, "-n", NAMESPACE, "--type", "merge", "-p", '{"spec":{"replicas":0}}')
+    status = wait_for_agent(PROBE, "Stopped", timeout=60)
     record("kill switch (replicas: 0) stops the agent", status.get("phase") == "Stopped")
     for agent in (researcher, bank, probe):
         agent.close()
-    kubectl("delete", "agent", "probe", "loose", "-n", NAMESPACE)
+    kubectl("delete", "agent", PROBE, "loose", "-n", NAMESPACE)
     time.sleep(8)
-    leftovers = kubectl("get", "deploy,svc,sa,secret,networkpolicy", "-n", NAMESPACE, "-o", "name", "-l", "platform.hacktx.dev/agent=probe")
+    leftovers = kubectl("get", "deploy,svc,sa,secret,networkpolicy", "-n", NAMESPACE, "-o", "name", "-l", f"platform.hacktx.dev/agent={PROBE}")
     record("deleting an Agent deletes everything it owned", leftovers.strip() == "", leftovers.strip().replace("\n", ", "))
 
     print(f"\n{sum(results)}/{len(results)} checks passed")

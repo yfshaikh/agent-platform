@@ -13,6 +13,8 @@ Showcase app on top: **Scam City**, a simulated town where AI scammers attack an
 
 | Folder | What |
 |---|---|
+| `api/` | platform API (FastAPI): agents CRUD, drafts, chat proxy, approval inbox (signs grants), traces, audit, live events; serves the console |
+| `console/` | web console (React + React Flow): live agent graph, create, approvals, traces, audit log |
 | `runtime/` | the agent runtime every agent pod runs: model-and-tool loop, policy, approvals, budgets, traces |
 | `operator/` | kopf operator: turns `Agent` objects into ServiceAccount, Secret, Deployment, Service, NetworkPolicy |
 | `tools/` | MCP tool servers: Nessie bank, SerpApi search |
@@ -25,15 +27,24 @@ Showcase app on top: **Scam City**, a simulated town where AI scammers attack an
 ```bash
 # images, built and loaded into the kind cluster "f1"
 docker build -t agent-runtime:dev runtime && docker build -t platform-tools:dev tools && docker build -t agent-operator:dev operator
-kind load docker-image agent-runtime:dev platform-tools:dev agent-operator:dev --name f1
+docker build -t platform-api:dev -f api/Dockerfile .                    # builds the console into the API image
+kind load docker-image agent-runtime:dev platform-tools:dev agent-operator:dev platform-api:dev --name f1
 
 kubectl --context kind-f1 apply -f deploy/crds/
-uv run --no-project --env-file .env python deploy/sync_secrets.py      # keys -> Secrets, never printed
+uv run --no-project --with cryptography --env-file .env python deploy/sync_secrets.py   # keys -> Secrets, never printed
 kubectl --context kind-f1 apply -f deploy/platform/platform.yaml -f deploy/platform/tools.yaml
 kubectl --context kind-f1 apply -f deploy/examples/
 
 kubectl --context kind-f1 get agents -A
-uv run --project runtime python deploy/e2e_chunk_a.py                  # 16 end-to-end checks
+uv run --project runtime python deploy/e2e_chunk_a.py                  # core platform checks
+uv run --project runtime python deploy/e2e_chunk_b.py                  # API, approvals, security checks
 ```
 
-Offline checks: `cd runtime && uv run python test_agent.py` · `cd tools && NESSIE_MOCK=1 uv run python test_nessie.py`
+Open the console:
+
+```bash
+kubectl --context kind-f1 -n platform port-forward svc/platform-api 8080:80
+uv run --project api python deploy/login_link.py                       # prints a one-time login link
+```
+
+Offline checks: `cd runtime && uv run python test_agent.py` · `cd tools && NESSIE_MOCK=1 uv run python test_nessie.py && uv run python test_grants.py`

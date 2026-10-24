@@ -51,8 +51,14 @@ rules:
   - apiGroups: [""]
     resources: [namespaces]
     verbs: [get, list, watch]
+  # Secrets: write-only here (each agent's keys Secret, each namespace's caller token). It can't read or list them;
+  # the only Secrets it reads are named in the platform-namespace Role below.
+  # ponytail: writes are still cluster-wide; an admission policy limiting them to agent namespaces would close that
   - apiGroups: [""]
-    resources: [secrets, serviceaccounts, services, resourcequotas]
+    resources: [secrets]
+    verbs: [create, patch]
+  - apiGroups: [""]
+    resources: [serviceaccounts, services, resourcequotas]
     verbs: [get, list, watch, create, patch, update, delete]
   - apiGroups: [apps]
     resources: [deployments]
@@ -71,6 +77,22 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: {name: agent-operator}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: agent-operator}
+subjects: [{kind: ServiceAccount, name: agent-operator, namespace: platform}]
+---
+# The only Secrets the operator can read: the shared keys and each tool's token (add a name here per new tool).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: agent-operator-read-keys, namespace: platform}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [platform-keys, tool-nessie-token, tool-serpapi-token]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: agent-operator-read-keys, namespace: platform}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: agent-operator-read-keys}
 subjects: [{kind: ServiceAccount, name: agent-operator, namespace: platform}]
 ---
 apiVersion: apps/v1
@@ -108,6 +130,8 @@ spec:
           env:
             - name: TOOL_TOKEN
               valueFrom: {secretKeyRef: {name: tool-nessie-token, key: TOOL_TOKEN}}
+            - name: APPROVAL_PUBLIC_KEY
+              valueFrom: {secretKeyRef: {name: platform-keys, key: APPROVAL_PUBLIC_KEY}}
             - name: NESSIE_API_KEY
               valueFrom: {secretKeyRef: {name: platform-keys, key: NESSIE_API_KEY, optional: true}}
             - {name: NESSIE_MOCK, value: "0"}
@@ -138,6 +162,8 @@ spec:
           env:
             - name: TOOL_TOKEN
               valueFrom: {secretKeyRef: {name: tool-serpapi-token, key: TOOL_TOKEN}}
+            - name: APPROVAL_PUBLIC_KEY
+              valueFrom: {secretKeyRef: {name: platform-keys, key: APPROVAL_PUBLIC_KEY}}
             - name: SERPAPI_API_KEY
               valueFrom: {secretKeyRef: {name: platform-keys, key: SERPAPI_API_KEY, optional: true}}
           ports: [{containerPort: 8000}]
@@ -149,3 +175,90 @@ metadata: {name: tool-serpapi, namespace: platform}
 spec:
   selector: {platform.hacktx.dev/tool: serpapi}
   ports: [{port: 8000}]
+---
+# Who may reach Postgres: the platform API (owner) and agent pods (limited role). Nothing else, even inside the cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: postgres-ingress, namespace: platform}
+spec:
+  podSelector: {matchLabels: {app: postgres}}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: platform-api}}
+        - namespaceSelector: {}
+          podSelector: {matchExpressions: [{key: platform.hacktx.dev/agent, operator: Exists}]}
+      ports: [{port: 5432}]
+---
+# Who may reach tool servers: agent pods only (each agent's own egress rules narrow it to the tools it lists).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: tools-ingress, namespace: platform}
+spec:
+  podSelector: {matchExpressions: [{key: platform.hacktx.dev/tool, operator: Exists}]}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector: {matchExpressions: [{key: platform.hacktx.dev/agent, operator: Exists}]}
+      ports: [{port: 8000}]
+---
+# The platform API: the console and apps talk only to this. It owns the database and signs approvals.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: platform-api, namespace: platform}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: platform-api}
+rules:
+  - apiGroups: [platform.hacktx.dev]
+    resources: [agents]
+    verbs: [get, list, watch, create, patch, update, delete]
+  - apiGroups: [platform.hacktx.dev]
+    resources: [tools]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods, events]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [agent-caller-token]  # to call agents; it can't read any other Secret
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: platform-api}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: platform-api}
+subjects: [{kind: ServiceAccount, name: platform-api, namespace: platform}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: platform-api, namespace: platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: platform-api}}
+  template:
+    metadata: {labels: {app: platform-api}}
+    spec:
+      serviceAccountName: platform-api
+      containers:
+        - name: api
+          image: platform-api:dev
+          imagePullPolicy: Never
+          envFrom: [{secretRef: {name: platform-api}}]
+          env: [{name: DRAFT_MODEL, value: "anthropic/claude-haiku-5.5"}]
+          ports: [{containerPort: 8000}]
+          readinessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 5}
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 384Mi}}
+          securityContext: {allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 10001, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: platform-api, namespace: platform}
+spec:
+  selector: {app: platform-api}
+  ports: [{port: 80, targetPort: 8000}]

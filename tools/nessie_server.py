@@ -133,4 +133,4 @@ async def pay_bill(account_id: str, payee: str, amount: float) -> dict:
 
 
 if __name__ == "__main__":
-    serve(mcp)
+    serve(mcp, sensitive={"transfer_money", "pay_bill"})  # must match the Tool object's "sensitive" classes

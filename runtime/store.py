@@ -1,29 +1,16 @@
 """Postgres storage for the runtime: traces, approvals, audit log, token usage, conversations.
 
 Every agent pod writes here, so pods stay stateless: any replica can resume an approval or
-continue a conversation. Tables are created on startup if missing (no migration tool).
+continue a conversation. The platform API owns the schema (api/main.py creates the tables);
+agents connect as a limited role that can't create, drop or delete anything.
 """
+import hashlib
+import hmac
 import json
+import os
 import uuid
 
 import asyncpg
-
-SCHEMA = """
-create table if not exists traces (
-  id text primary key, agent text, namespace text, conversation_id text, message text, answer text,
-  status text, tokens int, started_at timestamptz default now(), seconds real, steps jsonb);
-create table if not exists approvals (
-  id text primary key, agent text, namespace text, tool text, arguments jsonb, state jsonb,
-  status text default 'pending', decided_by text, created_at timestamptz default now(), decided_at timestamptz);
-create table if not exists audit (
-  id bigserial primary key, at timestamptz default now(), actor text, action text, target text, detail jsonb);
-create table if not exists usage (
-  agent text, namespace text, day date default current_date, tokens bigint default 0,
-  primary key (agent, namespace, day));
-create table if not exists conversations (
-  id text primary key, agent text, namespace text, messages jsonb, updated_at timestamptz default now());
-"""
-
 
 class Store:
     """Thin async wrapper over a connection pool; one instance per runtime process."""
@@ -34,11 +21,8 @@ class Store:
 
     @classmethod
     async def connect(cls, database_url):
-        """Open a pool and make sure the tables exist."""
-        pool = await asyncpg.create_pool(database_url, min_size=1, max_size=4)
-        async with pool.acquire() as connection:
-            await connection.execute(SCHEMA)
-        return cls(pool)
+        """Open a connection pool."""
+        return cls(await asyncpg.create_pool(database_url, min_size=1, max_size=4))
 
     async def tokens_today(self, agent, namespace):
         """Tokens this agent has used today."""
@@ -58,16 +42,24 @@ class Store:
         await self.pool.execute(
             "insert into traces (id, agent, namespace, conversation_id, message, answer, status, tokens, seconds, steps) "
             "values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (id) do update set answer=excluded.answer, "
-            "status=excluded.status, tokens=excluded.tokens, seconds=traces.seconds + excluded.seconds, steps=excluded.steps",
+            "status=excluded.status, tokens=excluded.tokens, seconds=traces.seconds + excluded.seconds, steps=excluded.steps, "
+            "updated_at=now()",
             trace["trace_id"], trace["agent"], trace["namespace"], trace.get("conversation_id"), trace["message"],
             trace["answer"], trace["status"], trace["tokens"], trace["seconds"], json.dumps(trace["steps"]))
 
     async def create_approval(self, agent, namespace, tool, arguments, state):
-        """Save a paused request waiting for a human; returns the approval id."""
+        """Save a paused request waiting for a human; returns the approval id.
+
+        `payload` is the exact text of the request, stamped (`mac`) with this agent's own key. The API shows, signs and
+        resumes from this text only, and refuses rows whose stamp doesn't match, so no agent can fake another's request.
+        """
         approval_id = uuid.uuid4().hex[:12]
+        payload = json.dumps({"tool": tool, "arguments": arguments, "state": state}, sort_keys=True)
+        mac = hmac.new(os.environ.get("AGENT_SIGNING_KEY", "").encode(), f"{approval_id}\n{agent}\n{namespace}\n{payload}".encode(),
+                       hashlib.sha256).hexdigest()
         await self.pool.execute(
-            "insert into approvals (id, agent, namespace, tool, arguments, state) values ($1,$2,$3,$4,$5,$6)",
-            approval_id, agent, namespace, tool, json.dumps(arguments), json.dumps(state))
+            "insert into approvals (id, agent, namespace, tool, arguments, state, payload, mac) values ($1,$2,$3,$4,$5,$6,$7,$8)",
+            approval_id, agent, namespace, tool, json.dumps(arguments), json.dumps(state), payload, mac)
         return approval_id
 
     async def take_approval(self, approval_id, agent, namespace, decision, decided_by):
@@ -77,9 +69,9 @@ class Store:
         """
         row = await self.pool.fetchrow(
             "update approvals set status=$4, decided_by=$5, decided_at=now() "
-            "where id=$1 and agent=$2 and namespace=$3 and status='pending' returning state",
+            "where id=$1 and agent=$2 and namespace=$3 and status='pending' returning payload",
             approval_id, agent, namespace, decision, decided_by)
-        return json.loads(row["state"]) if row else None
+        return json.loads(row["payload"])["state"] if row else None  # the same stamped text the human approved
 
     async def audit(self, actor, action, target, detail):
         """Append one event to the audit log."""

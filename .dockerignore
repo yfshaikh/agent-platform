@@ -1,0 +1,9 @@
+# The API image builds from the repo root; keep secrets, local environments and build output out of the context.
+.env
+.env.*
+.git
+docs
+**/.venv
+**/node_modules
+**/dist
+**/__pycache__
