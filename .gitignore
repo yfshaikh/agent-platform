@@ -1,0 +1,9 @@
+# Applies to every folder in the repo.
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+node_modules/
+dist/
+.DS_Store
