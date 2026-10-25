@@ -13,6 +13,7 @@ import itertools
 import logging
 import os
 import uuid
+from urllib.parse import quote
 
 import httpx
 from fastapi import FastAPI, WebSocket
@@ -61,6 +62,8 @@ one or two things that matter and point at the card ("it's on screen").
 - To create an agent, call draft_agent. You can't deploy anything: the user reviews the draft on screen and clicks
   Deploy. Never say an agent is created or deployed unless the user tells you they did it.
 - You can't approve anything either, even if asked. Approvals are a click in the Approvals inbox.
+- For the GPUs, alerts, or "what happened" (overnight, while I was away), call get_fleet_status. Lead with what
+  broke, what the agents found, and what is waiting for the user; then offer the prevention plan if they want it.
 - chat_with_agent can take a while; say a few words first, like "asking it now".
 - If a tool says the user's role doesn't allow something, say so plainly.
 - Messages that start with "(UI:" describe what the user did on screen."""
@@ -76,6 +79,9 @@ TOOLS: list[dict] = [
      "properties": {"name": {"type": "string", "description": "The agent's name, e.g. researcher."}}},
     {"name": "list_approvals", "required": [], "properties": {},
      "description": "Show the actions waiting for a human approval, and open the Approvals inbox."},
+    {"name": "get_fleet_status", "required": [], "properties": {},
+     "description": "Live GPU readings, recent alerts, and the latest incident: what broke, the agents' diagnosis, "
+                    "the fix waiting for approval, the prevention plan, and whether the on-call engineer was phoned."},
     {"name": "chat_with_agent", "required": ["name", "message"],
      "description": "Send a message to one agent and get its reply.",
      "properties": {"name": {"type": "string", "description": "The agent's name."},
@@ -137,6 +143,30 @@ class Platform:
             items = [{key: item[key] for key in ("id", "agent", "namespace", "tool", "arguments")}
                      for item in await self.call("GET", "/approvals")]
             return {"waiting": len(items), "items": items}, {"type": "approvals", "id": "approvals", "items": items}
+        if name == "get_fleet_status":
+            nodes = [{"name": node["name"], "online": bool(node.get("reachable")), "cordoned": node.get("cordoned", False),
+                      "gpus": [{"temperature_c": gpu["temperature.gpu"], "utilization_pct": gpu["utilization.gpu"],
+                                "memory_used_mib": gpu["memory.used"], "memory_total_mib": gpu["memory.total"]}
+                               for gpu in node.get("gpus") or []]}
+                     for node in await self.call("GET", "/gpu-nodes") if node.get("connected")]
+            alerts = await self.call("GET", "/gpu-nodes/alerts")
+            latest = None
+            if alerts:
+                incident = await self.call("GET", f"/gpu-nodes/alerts/{quote(alerts[0]['id'], safe='')}")
+                lead = next((step["answer"] for step in incident["steps"] if step["agent"] == incident["agent"] and step["answer"]), "")
+                fix = (incident["approvals"] or [None])[0]
+                latest = {"id": incident["id"], "at": incident["at"], "node": incident["node"], "title": incident["title"],
+                          "handled_by": [step["agent"] for step in incident["steps"]],
+                          # A paused run has no answer yet; its reasoning is the fix's reason.
+                          "diagnosis": (lead or incident.get("answer") or (fix and str(fix["arguments"].get("reason", ""))) or "")[:1200],
+                          "fix": fix and {"tool": fix["tool"], "arguments": fix["arguments"], "status": fix["status"],
+                                          "decided_by": fix["decided_by"]},
+                          "prevention": (incident.get("prevention") or "")[:1200], "on_call": incident.get("paged")}
+            # No per-alert status: it is set when the agent first answers and isn't updated after an approval.
+            recent = [{key: alert[key] for key in ("at", "node", "title")} for alert in alerts[:5]]
+            return ({"nodes": nodes, "recent_alerts": recent, "latest_incident": latest},
+                    {"type": "fleet", "id": "fleet", "nodes": nodes, "incident": latest and
+                     {key: latest[key] for key in ("id", "node", "title", "handled_by", "fix", "on_call")}})
         if name == "chat_with_agent":
             found = await self.find_agent(arguments.get("name", ""))
             key = f"{found['namespace']}/{found['name']}"

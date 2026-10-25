@@ -19,10 +19,12 @@ type Card =
   | { type: "agents"; id: string; agents: { namespace: string; name: string; phase: string; ready: number; replicas: number }[] }
   | { type: "status"; id: string; namespace: string; name: string; phase: string; message?: string; pods: { name: string; ready: boolean; phase: string }[]; warnings: { reason: string; message: string }[] }
   | { type: "approvals"; id: string; items: { id: string; agent: string; namespace: string; tool: string; arguments: Record<string, unknown> }[] }
-  | { type: "chat"; id: string; namespace: string; agent: string; message: string; status: string; answer?: string; tool?: string; trace_id: string };
+  | { type: "chat"; id: string; namespace: string; agent: string; message: string; status: string; answer?: string; tool?: string; trace_id: string }
+  | { type: "fleet"; id: string; nodes: { name: string; online: boolean; gpus: { temperature_c: number; utilization_pct: number; memory_used_mib: number; memory_total_mib: number }[] }[];
+      incident: { id: string; node: string; title: string; handled_by: string[]; fix: { tool: string; arguments: Record<string, unknown>; status: string; decided_by: string | null } | null; on_call: string | null } | null };
 
 const isCard = (message: unknown): message is Card =>
-  !!message && typeof (message as Card).id === "string" && ["draft", "agents", "status", "approvals", "chat"].includes((message as Card).type);
+  !!message && typeof (message as Card).id === "string" && ["draft", "agents", "status", "approvals", "chat", "fleet"].includes((message as Card).type);
 
 /** Split a voice spectrum (dB-scaled to 0..max) into three bands; the 0.25 floor is the level between syllables. */
 function bands(spectrum: ArrayLike<number>, max = 255): Levels {
@@ -197,6 +199,26 @@ function CardView({ card }: { card: Card }) {
         {card.warnings.map((warning, index) => <p key={index} className="error small">{warning.reason}: {warning.message}</p>)}
       </article>
     );
+  if (card.type === "fleet") {
+    const fix = card.incident?.fix;
+    return (
+      <article className={`vcard ${fix?.status === "pending" ? "human" : ""}`}>
+        <span className="kind">GPU fleet</span>
+        <ul>{card.nodes.map((node) => (
+          <li key={node.name}><span>{node.name}</span><span className="muted">{node.online ? node.gpus.map((gpu) =>
+            `${gpu.temperature_c} °C, ${(gpu.memory_used_mib / 1024).toFixed(1)} of ${(gpu.memory_total_mib / 1024).toFixed(0)} GB`).join("; ") : "offline"}</span></li>
+        ))}</ul>
+        {card.incident && (
+          <>
+            <h4>{card.incident.node}: {card.incident.title}</h4>
+            <p className="small muted">Worked by {card.incident.handled_by.join(" and ") || "no agent yet"}. {card.incident.on_call ?? ""}</p>
+            {fix && <p className="small">{fix.tool.replace("__", ".")} {String(fix.arguments.name ?? "")}: {fix.status === "pending" ? "waiting for you" : `${fix.status} by ${fix.decided_by}`}</p>}
+            <a href={`#/incidents/${encodeURIComponent(card.incident.id)}`}>Open the incident</a>
+          </>
+        )}
+      </article>
+    );
+  }
   if (card.type === "approvals")
     return (
       <article className={`vcard ${card.items.length ? "human" : ""}`}>
