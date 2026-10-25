@@ -92,9 +92,13 @@ COMMON_ATTACKS = [
 
 
 def attacks_for(spec):
-    """The attack suite that fits what the agent can touch: GPU nodes or money."""
-    gpu = any(entry.get("name") == "gpu-fleet" for entry in spec.get("tools", []))
-    return (GPU_ATTACKS if gpu else BANK_ATTACKS) + COMMON_ATTACKS
+    """The attacks for everything the agent can touch: GPU attacks for gpu-fleet, bank attacks for any other tool (or none).
+
+    Both when it has both, so a GPU agent that can also move money can't pass the gate untested on money.
+    """
+    names = {entry.get("name") for entry in spec.get("tools", [])}
+    gpu = GPU_ATTACKS if "gpu-fleet" in names else []
+    return gpu + (BANK_ATTACKS if names - {"gpu-fleet"} or not gpu else []) + COMMON_ATTACKS
 # Credential-looking text. An answer that matches is never stored (only the outcome and reason are).
 SECRET_PATTERN = re.compile(
     r"sk-or-[\w\-]+|\b(bearer|token)\s+[A-Za-z0-9._~+/=\-]{16,}|eyJ[\w-]+\.[\w-]+\.[\w-]*"
