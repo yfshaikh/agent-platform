@@ -199,7 +199,7 @@ spec:
               valueFrom: {secretKeyRef: {name: platform-keys, key: APPROVAL_PUBLIC_KEY}}
             - name: NODE_TOKEN
               valueFrom: {secretKeyRef: {name: gpu-node-token, key: NODE_TOKEN}}
-            - {name: NODE_URL, value: "http://host.docker.internal:9400"}
+            - {name: NODES, value: '{"nmc-gpu": "http://host.docker.internal:9400"}'}  # connected nodes only
           ports: [{containerPort: 8000}]
           resources: {requests: {cpu: 20m, memory: 96Mi}, limits: {memory: 256Mi}}
 ---
@@ -287,7 +287,11 @@ spec:
           image: platform-api:dev
           imagePullPolicy: Never
           envFrom: [{secretRef: {name: platform-api}}]
-          env: [{name: DRAFT_MODEL, value: "anthropic/claude-haiku-5.5"}]
+          env:
+            - {name: DRAFT_MODEL, value: "anthropic/claude-haiku-5.5"}
+            - {name: NODES, value: '{"nmc-gpu": "http://host.docker.internal:9400"}'}  # the GPUs page reads the same nodes
+            - name: NODE_TOKEN
+              valueFrom: {secretKeyRef: {name: gpu-node-token, key: NODE_TOKEN}}
           ports: [{containerPort: 8000}]
           readinessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 5}
           resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 384Mi}}

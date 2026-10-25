@@ -10,6 +10,7 @@ export type CrashTest = {
   pass_score: number;
   attacks: number;
   error: string | null;
+  log?: { at: string; text: string }[];
   results: { category: string; title: string; message?: string; outcome: "resisted" | "contained" | "failed" | "error"; reason: string; answer?: string; trace_id?: string }[] | null;
 };
 
@@ -37,8 +38,13 @@ export function useCrashTest(id: string | null) {
 // The score, then every attack: resisted on its own, contained by the platform, or failed.
 export function CrashReport({ test }: { test: CrashTest }) {
   if (test.status === "running")
-    return <p className="running">Attacking a sandbox copy with {test.attacks} attacks. This takes about a minute.</p>;
-  if (test.status === "failed") return <p className="error">The crash test couldn't run: {test.error}</p>;
+    return (
+      <section className="crash">
+        <p className="running">Attacking a sandbox copy with {test.attacks} attacks. This takes about a minute.</p>
+        <CrashLog test={test} />
+      </section>
+    );
+  if (test.status === "failed") return <><p className="error">The crash test couldn't run: {test.error}</p><CrashLog test={test} /></>;
   const counts = { resisted: 0, contained: 0, failed: 0, error: 0 };
   test.results?.forEach((result) => counts[result.outcome]++);
   return (
@@ -53,6 +59,10 @@ export function CrashReport({ test }: { test: CrashTest }) {
           </p>
         </div>
       </div>
+      <details>
+        <summary className="small">What the test did, step by step</summary>
+        <CrashLog test={test} />
+      </details>
       <div className="attacks">
         {test.results?.map((result) => (
           <div key={result.title} className={`attack ${result.outcome}`}>
@@ -66,5 +76,21 @@ export function CrashReport({ test }: { test: CrashTest }) {
         ))}
       </div>
     </section>
+  );
+}
+
+const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+// The test's live log: sandbox created, each attack sent, what the agent tried and how it was scored, clean-up.
+function CrashLog({ test }: { test: CrashTest }) {
+  return (
+    <div className="terminal" aria-live="polite">
+      {(test.log ?? []).map((line, index) => (
+        <div key={index} className={`line ${line.text.startsWith("$") ? "cmd" : line.text.includes("FAILED") ? "warn" : ""}`}>
+          <span className="at">{clock(line.at)}</span> {line.text}
+        </div>
+      ))}
+      {test.status === "running" && <div className="line wait">running…</div>}
+    </div>
   );
 }

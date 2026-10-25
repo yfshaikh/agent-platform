@@ -43,6 +43,8 @@ spec:
                       approvalAbove:
                         type: object
                         additionalProperties: {type: number, minimum: 0}
+                      # e.g. [nmc-gpu]: the only nodes this agent may act on (calls naming another node are refused)
+                      nodes: {type: array, items: {type: string}}
                 talksTo: {type: array, items: {type: string}}
                 replicas: {type: integer, minimum: 0, maximum: 5, default: 1}
                 budget:

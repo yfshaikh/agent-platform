@@ -118,6 +118,11 @@ def check_rules():
     assert agent.tool_rule(server, "read_it") == "human"  # tightened: allowed
     assert agent.tool_rule(server, "send_it") == "human"  # loosened: ignored
     assert agent.tool_rule(server, "mystery") == "human"  # unclassified -> sensitive
+    gpu = {"server": {"nodes": ["nmc-gpu"]}, "schema": {"function": {"parameters": {"properties": {"node": {}, "name": {}}}}}}
+    assert not agent.out_of_scope(gpu, {"node": "nmc-gpu"}) and agent.out_of_scope(gpu, {"node": "nmc-gpu-2"})
+    assert agent.out_of_scope(gpu, {})  # no node named: refused, not defaulted
+    assert not agent.out_of_scope({**gpu, "server": {}}, {"node": "anything"})  # tools without nodes aren't scoped
+    assert not agent.out_of_scope({"schema": {"function": {"name": "platform__send_message"}}}, {"to": "x"})  # built-ins
     assert agent.over_limit({"amount": 900}, 500) and not agent.over_limit({"amount": 40}, 500)
     assert agent.over_limit({"amount": "lots"}, 500)  # not a number: fail closed
     assert agent.over_limit({"amount": float("nan")}, 500) and agent.over_limit({"amount": "Infinity"}, 500)

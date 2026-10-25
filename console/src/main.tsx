@@ -5,6 +5,7 @@ import { Graph } from "./Graph";
 import { Create } from "./Create";
 import { Login, Mark } from "./Login";
 import { Approvals, Audit, Traces, Users } from "./pages";
+import { Gpus } from "./Gpus";
 import "./styles.css";
 
 // The voice orb pulls in Pipecat, so it loads after the rest of the console.
@@ -57,6 +58,7 @@ function App() {
   const links: [string, string, boolean][] = [
     ["graph", "Agents", true],
     ["create", "Build an agent", can("draft") || can("build")],
+    ["gpus", "GPUs", true],
     ["approvals", "Approvals", true],
     ["traces", "Traces", true],
     ["audit", "Audit log", true],
@@ -92,6 +94,7 @@ function App() {
         <main className="page">
           {route === "graph" && <Graph agents={agents} pulse={pulse} selected={param} pending={pending} />}
           {route === "create" && <Create key={param} />}
+          {route === "gpus" && <Gpus />}
           {route === "approvals" && <Approvals pending={pending} />}
           {route === "traces" && <Traces traceId={param} />}
           {route === "audit" && <Audit />}

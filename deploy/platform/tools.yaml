@@ -32,8 +32,12 @@ metadata: {name: gpu-fleet, namespace: platform}
 spec:
   url: http://tool-gpu-fleet.platform.svc:8000/mcp
   secretRef: tool-gpu-fleet-token
-  description: Real GPU readings and jobs on NMC²'s GPU node (Brev)
+  description: Real GPU readings and jobs on NMC²'s GPU nodes
+  nodes:
+    - {name: nmc-gpu, gpu: "Tesla T4, 16 GB", provider: "Brev (GCP)", connected: true}
+    - {name: nmc-gpu-2, gpu: "NVIDIA L4, 24 GB", provider: "Brev (GCP)", connected: false}  # shows where a second machine goes
   classes:
+    list_nodes: read
     list_gpus: read
     list_jobs: read
     job_logs: read

@@ -67,6 +67,15 @@ def tool_rule(server, tool_name):
     return max(default, override, key=RULE_STRICTNESS.get)
 
 
+def out_of_scope(tool, arguments):
+    """True if a call names a node this agent wasn't given (tools[].nodes). Enforced here, in code, not in the prompt."""
+    nodes = (tool.get("server") or {}).get("nodes")  # built-in tools (platform__send_message) have no server
+    if not nodes:
+        return False
+    takes_node = "node" in (tool["schema"]["function"].get("parameters") or {}).get("properties", {})
+    return bool(nodes) and takes_node and arguments.get("node") not in nodes
+
+
 def server_headers(server):
     """Build the HTTP headers for one tool server, reading its token from the environment if it has one."""
     token_env = server.get("token_env")
@@ -87,7 +96,8 @@ async def list_tools(server):
             "above": server.get("approvalAbove", {}).get(tool.name),
             "class": server.get("classes", {}).get(tool.name, "sensitive"),
             "schema": {"type": "function", "function": {
-                "name": f"{server['name']}__{tool.name}", "description": tool.description or "",
+                "name": f"{server['name']}__{tool.name}",
+                "description": (tool.description or "") + (f" Your nodes: {', '.join(server['nodes'])}." if server.get("nodes") else ""),
                 "parameters": tool.input_schema,
             }},
         }
@@ -204,6 +214,8 @@ async def run_loop(state, tools_by_name, model=call_model, tool_runner=call_tool
             rule = tool["rule"] if tool else "blocked"
             if rule == "auto" and tool and tool.get("above") is not None and over_limit(arguments, tool["above"]):
                 rule = "human"  # e.g. small payments run automatically, but not above $500
+            if tool and arguments is not None and out_of_scope(tool, arguments):
+                rule = "out_of_scope"  # refused outright: no point asking a human to approve a call on a node it can't use
             decision = state["decisions"].pop(tool_call["id"], None)
             if rule == "human" and decision is None and can_pause:
                 return {"status": "awaiting_approval", "tool": name, "arguments": arguments}
@@ -212,6 +224,8 @@ async def run_loop(state, tools_by_name, model=call_model, tool_runner=call_tool
                 result = "invalid arguments: not valid JSON"
             elif rule == "blocked":
                 result = f"refused: {name} is not one of your tools"
+            elif rule == "out_of_scope":
+                result = f"refused: node {arguments.get('node')!r} isn't one of your nodes ({', '.join(tool['server']['nodes'])})"
             elif rule == "deny":
                 result = f"refused by platform policy: {name} is not allowed for this agent"
             elif rule == "human" and decision != "approve":

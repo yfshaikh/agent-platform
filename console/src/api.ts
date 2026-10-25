@@ -4,7 +4,7 @@ import { createContext, useContext } from "react";
 export type Spec = {
   model: string;
   instructions: string;
-  tools?: { name: string; allow?: string[]; approval?: Record<string, string>; approvalAbove?: number }[];
+  tools?: { name: string; allow?: string[]; approval?: Record<string, string>; approvalAbove?: Record<string, number>; nodes?: string[] }[];
   talksTo?: string[];
   replicas?: number;
   budget?: { tokensPerDay?: number; maxStepsPerRequest?: number };
@@ -16,7 +16,8 @@ export type Agent = {
   status: { phase?: string; message?: string; readyReplicas?: number; crashTest?: { id: string | null; score: number | null; passed: boolean } };
   tokens_today: number;
 };
-export type Tool = { name: string; description: string; classes: Record<string, "read" | "write" | "sensitive"> };
+export type GpuNodeEntry = { name: string; gpu?: string; provider?: string; connected?: boolean };
+export type Tool = { name: string; description: string; classes: Record<string, "read" | "write" | "sensitive">; nodes?: GpuNodeEntry[] };
 export type Step = {
   type: "model" | "tool";
   name?: string;

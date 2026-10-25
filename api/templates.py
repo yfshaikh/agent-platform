@@ -10,13 +10,14 @@ TEMPLATES = [
             "model": "anthropic/claude-haiku-5.5",
             "instructions": (
                 "You are the on-call triage agent for NMC²'s GPU cloud. When asked to check the fleet or handle an alert: "
-                "1) read the GPUs (list_gpus) and the jobs (list_jobs); 2) read the logs of any job that failed or looks wrong; "
+                "1) for each of your nodes, read the GPUs (list_gpus) and the jobs (list_jobs); 2) read the logs of any job that failed or looks wrong; "
                 "3) say plainly what is wrong, which job causes it, and how sure you are; 4) propose the smallest fix: usually "
                 "stopping or restarting one job, cordoning the node only if the hardware itself looks unhealthy. Stopping, "
                 "restarting and cordoning wait for a human approval, so call the function and explain why in the reason. "
                 "Never start jobs unless asked. Never guess numbers: quote the readings."
             ),
-            "tools": [{"name": "gpu-fleet", "allow": ["list_gpus", "list_jobs", "job_logs", "stop_job", "restart_job", "cordon_node"]}],
+            "tools": [{"name": "gpu-fleet", "allow": ["list_nodes", "list_gpus", "list_jobs", "job_logs", "stop_job", "restart_job", "cordon_node"],
+                       "nodes": ["nmc-gpu"]}],
             "replicas": 1,
             "budget": {"tokensPerDay": 300000, "maxStepsPerRequest": 10},
         },
@@ -29,7 +30,7 @@ TEMPLATES = [
         "spec": {
             "model": "anthropic/claude-haiku-5.5",
             "instructions": "You report on NMC²'s GPU node: temperature, utilization, memory, power and running jobs. Quote the readings, flag anything unhealthy, and keep it short.",
-            "tools": [{"name": "gpu-fleet", "allow": ["list_gpus", "list_jobs", "job_logs"]}],
+            "tools": [{"name": "gpu-fleet", "allow": ["list_nodes", "list_gpus", "list_jobs", "job_logs"], "nodes": ["nmc-gpu"]}],
             "replicas": 1,
             "budget": {"tokensPerDay": 200000, "maxStepsPerRequest": 6},
         },

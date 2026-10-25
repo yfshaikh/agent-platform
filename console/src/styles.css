@@ -318,6 +318,39 @@ td .mono { color: var(--muted); }
 .timeline pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
 .answer { border-left: 3px solid var(--accent); padding: 0.4rem 0 0.4rem 1rem; white-space: pre-wrap; }
 
+/* ---- GPUs ----------------------------------------------------------------------------------------------------- */
+.nodes { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; margin-bottom: 1.6rem; }
+.node-card {
+  display: grid; gap: 0.5rem; text-align: left; white-space: normal; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; box-shadow: var(--shadow); font-weight: 400;
+}
+.node-card:hover:not(:disabled) { filter: none; border-color: var(--accent); }
+.node-card.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow); }
+.node-card:disabled { opacity: 0.6; border-style: dashed; box-shadow: none; }
+.node-card .row { justify-content: space-between; }
+.readings { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem 1rem; margin-top: 0.3rem; }
+.reading { display: grid; gap: 0.15rem; }
+.reading .bar { height: 5px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+.reading .bar span { display: block; height: 100%; background: var(--accent); transition: width 0.6s; }
+.reading .bar span.high { background: var(--human); }
+.incidents { display: grid; gap: 0.6rem; margin-bottom: 1.6rem; }
+.incident-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.75rem; }
+.jobs-area { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.jobs-area tr.picked td { background: var(--accent-soft); }
+.job-logs { max-height: 420px; min-height: 160px; }
+.tool-nodes { margin-top: 0.5rem !important; padding-top: 0.45rem !important; border-top: 1px solid var(--line); }
+.tool-nodes li span { color: var(--faint); }
+.tool-nodes li.up span { color: var(--ok); }
+.node-picker { border: 1px solid var(--line); border-radius: 9px; padding: 0.8rem 0.9rem; margin: 0; display: grid; gap: 0.5rem; }
+.node-picker legend { font-size: 0.85rem; font-weight: 600; color: var(--muted); padding: 0; margin-bottom: 0.5rem; }
+.node-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.5rem; }
+.node-option { display: flex; flex-direction: row; gap: 0.55rem; align-items: start; font-weight: 400; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; padding: 0.55rem 0.65rem; cursor: pointer; }
+.node-option input { width: auto; margin-top: 0.2rem; }
+.node-option.off { border-style: dashed; opacity: 0.6; cursor: default; }
+details summary { cursor: pointer; color: var(--muted); }
+details .terminal { margin-top: 0.5rem; }
+
 /* ---- users ---------------------------------------------------------------------------------------------------- */
 .users { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 1.5rem; align-items: start; }
 .users td:first-child { white-space: nowrap; font-weight: 600; }
@@ -355,6 +388,6 @@ td .mono { color: var(--muted); }
   .page { padding: 1.4rem 1rem 6rem; }
   .map { height: calc(100vh - 7rem); flex-direction: column; }
   .drawer { position: fixed; inset: 0; z-index: 40; width: 100%; }
-  .create, .users { grid-template-columns: 1fr; }
+  .create, .users, .jobs-area { grid-template-columns: 1fr; }
   .review { position: static; }
 }

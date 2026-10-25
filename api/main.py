@@ -447,7 +447,8 @@ async def get_templates(actor=Depends(user)):
 @api.get("/tools")
 async def get_tools(actor=Depends(user)):
     """The tool registry: each tool's functions and their permission class."""
-    return [{"name": name, "description": tool["spec"].get("description", ""), "classes": tool["spec"]["classes"]}
+    return [{"name": name, "description": tool["spec"].get("description", ""), "classes": tool["spec"]["classes"],
+             "nodes": tool["spec"].get("nodes", [])}
             for name, tool in (await tool_registry()).items()]
 
 
@@ -794,6 +795,9 @@ app.include_router(api)
 from crash import router as crash_router  # noqa: E402 (these need everything above; they import from this module)
 
 app.include_router(crash_router)
+from gpus import router as gpus_router  # noqa: E402
+
+app.include_router(gpus_router)
 
 
 @app.get("/healthz")

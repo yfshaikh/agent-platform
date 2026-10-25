@@ -28,3 +28,14 @@ spec:
                 classes:
                   type: object
                   additionalProperties: {type: string, enum: [read, write, sensitive]}
+                # Machines this tool can act on (the gpu-fleet tool's GPU nodes). Agents pick from these by name.
+                nodes:
+                  type: array
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name: {type: string}
+                      gpu: {type: string}
+                      provider: {type: string}
+                      connected: {type: boolean}

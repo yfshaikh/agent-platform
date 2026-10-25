@@ -60,6 +60,13 @@ function ToolPanel({ data }: NodeProps<Node<{ tool: Tool }>>) {
           <li key={name} className={kind}>{name}<span>{decides[kind]}</span></li>
         ))}
       </ul>
+      {data.tool.nodes && (
+        <ul className="tool-nodes">
+          {data.tool.nodes.map((node) => (
+            <li key={node.name} className={node.connected ? "up" : ""}>{node.name}<span>{node.connected ? node.gpu : "not connected"}</span></li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -106,7 +113,7 @@ export function Graph({ agents: snapshot, pulse, selected, pending }: { agents: 
     let toolY = 0; // stack tool panels by their height (one row per function), so taller ones never overlap the next
     const nodes: Node[] = visibleTools.map((tool) => {
       const node = { id: `tool:${tool.name}`, type: "tool", position: { x: 0, y: toolY }, data: { tool } };
-      toolY += 110 + Object.keys(tool.classes).length * 19;
+      toolY += 110 + (Object.keys(tool.classes).length + (tool.nodes?.length ?? 0) + (tool.nodes ? 1 : 0)) * 19;
       return node;
     });
     const edges: Edge[] = [];

@@ -105,6 +105,14 @@ def validate(spec, tools):
         for function in entry.get("allow", []):
             if function not in classes:
                 problems.append(f"{entry['name']} has no function {function!r}")
+        registry = {node["name"]: node for node in tool["spec"].get("nodes", [])}
+        for node in entry.get("nodes", []):
+            if node not in registry:
+                problems.append(f"{entry['name']} has no node {node!r}")
+            elif not registry[node].get("connected", True):
+                problems.append(f"{entry['name']} node {node!r} isn't connected yet")
+        if registry and not entry.get("nodes"):
+            problems.append(f"{entry['name']}: pick the nodes this agent may use (tools[].nodes)")
         for function, rule in entry.get("approval", {}).items():
             default = CLASS_DEFAULT_RULE[classes.get(function, "sensitive")]
             if RULE_STRICTNESS[rule] < RULE_STRICTNESS[default]:
@@ -160,7 +168,8 @@ def build_objects(agent, tools, siblings_by_name):
             secret_data[token_env] = token
         tool_servers.append({"name": entry["name"], "url": tool["spec"]["url"], "token_env": token_env,
                              "classes": tool["spec"]["classes"], "allow": entry.get("allow", []),
-                             "approval": entry.get("approval", {}), "approvalAbove": entry.get("approvalAbove", {})})
+                             "approval": entry.get("approval", {}), "approvalAbove": entry.get("approvalAbove", {}),
+                             "nodes": entry.get("nodes", [])})
 
     talks_to = resolve_talks_to(agent, siblings_by_name)
     talked_to_by = sorted(other for other, other_agent in siblings_by_name.items()

@@ -14,6 +14,7 @@ import re
 import secrets
 import subprocess
 import threading
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ["NODE_TOKEN"]
@@ -89,13 +90,13 @@ def start_job(template):
 
 def job_action(name, action):
     """stop, restart or logs for one job container."""
-    current = {job["name"]: job for job in jobs()}
-    if not JOB_NAME.fullmatch(name) or name not in current:
+    if not JOB_NAME.fullmatch(name) or name not in {job["name"] for job in jobs()}:
         raise ValueError(f"no job called {name!r}")
     if action == "logs":
         return {"name": name, "logs": run("docker", "logs", "--tail", "40", name)[1]}
     if action == "restart":  # bringing a finished job back is new work: same rules as starting one
-        with capacity:
+        with capacity:  # read the jobs again under the lock, so the count can't be stale
+            current = {job["name"]: job for job in jobs()}
             if current[name]["status"] != "running":
                 check_capacity(sum(job["status"] == "running" for job in current.values()))
             code, output = run("docker", "restart", name)
@@ -121,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_request(self, method):
         if not hmac.compare_digest(self.headers.get("authorization", "").encode(), f"Bearer {TOKEN}".encode()):
             return self.respond(401, {"error": "bad token"})
-        parts = self.path.strip("/").split("/")
+        parts = urllib.parse.urlsplit(self.path).path.strip("/").split("/")  # route on the path only (no query/fragment)
         try:
             length = int(self.headers.get("content-length") or 0)
             if not 0 <= length <= 10_000:
@@ -142,7 +143,9 @@ class Handler(BaseHTTPRequestHandler):
             if method == "POST" and len(parts) == 3 and parts[0] == "jobs" and parts[2] in ("stop", "restart"):
                 return self.respond(200, job_action(parts[1], parts[2]))
             if method == "POST" and parts == ["cordon"]:
-                CORDON_FILE.touch() if body.get("on", True) else CORDON_FILE.unlink(missing_ok=True)
+                if not isinstance(body.get("on"), bool):
+                    raise ValueError('cordon needs {"on": true} or {"on": false}')
+                CORDON_FILE.touch() if body["on"] else CORDON_FILE.unlink(missing_ok=True)
                 return self.respond(200, {"cordoned": CORDON_FILE.exists()})
             return self.respond(404, {"error": "not found"})
         except ValueError as error:

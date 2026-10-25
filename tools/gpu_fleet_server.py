@@ -3,9 +3,11 @@
 Agents can look (readings, jobs, logs) and start jobs from the node's fixed list. Stopping or restarting a job and
 cordoning the node are sensitive: each call needs a platform-signed human approval, checked here (common.guard).
 No function creates, resizes or deletes machines: people do that.
-ponytail: one node (the Brev box); a NODES map of name -> URL when there's more than one.
+Every function names the node it acts on; each agent's runtime refuses nodes the agent wasn't given (tools[].nodes).
 """
+import json
 import os
+import re
 
 import httpx
 from mcp.server.mcpserver import MCPServer
@@ -13,22 +15,32 @@ from mcp.types import ToolAnnotations
 
 from common import serve
 
-NODE_URL = os.environ.get("NODE_URL", "http://host.docker.internal:9400")  # the SSH tunnel to the GPU box
-NODE_NAME = os.environ.get("NODE_NAME", "nmc-gpu")
+# Connected nodes: name -> URL of its node agent (nmc-gpu: the SSH tunnel to the Brev box). ponytail: one token for all nodes
+NODES = json.loads(os.environ.get("NODES", '{"nmc-gpu": "http://host.docker.internal:9400"}'))
+JOB_NAME = re.compile(r"^job-[a-z-]+-[0-9a-f]{6}$")  # same rule as the node: a name can't smuggle in another path
 HOT_CELSIUS = 83  # where data-center GPUs start slowing themselves down
 # nvidia-smi throttle bit flags worth flagging. Not 0x4 (software power cap): a busy GPU sits at its power limit, that's normal.
 THROTTLE_REASONS = {0x8: "hardware slowdown", 0x20: "software thermal slowdown", 0x40: "hardware thermal slowdown",
                     0x80: "hardware power brake"}
 
 
-async def node(method, path, body=None):
-    """One call to the node agent; its error message comes back as the tool's error."""
+def job_path(name, action):
+    """/jobs/<name>/<action>, only for a real job name (so an approved "stop" can't become a different request)."""
+    if not JOB_NAME.fullmatch(name):
+        raise ValueError(f"{name!r} isn't a job name (they look like job-train-1a2b3c)")
+    return f"/jobs/{name}/{action}"
+
+
+async def call_node(node, method, path, body=None):
+    """One call to a node's agent; its error message comes back as the tool's error."""
+    if node not in NODES:
+        raise ValueError(f"no connected node {node!r}; nodes: {', '.join(NODES)}")
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.request(method, NODE_URL + path, json=body,
+            response = await client.request(method, NODES[node] + path, json=body,
                                             headers={"Authorization": f"Bearer {os.environ['NODE_TOKEN']}"})
     except httpx.HTTPError as error:
-        raise RuntimeError(f"GPU node {NODE_NAME} unreachable ({type(error).__name__})") from None
+        raise RuntimeError(f"GPU node {node} unreachable ({type(error).__name__})") from None
     if response.status_code >= 400:
         raise RuntimeError(response.json().get("error", f"HTTP {response.status_code}"))
     return response.json()
@@ -52,49 +64,54 @@ def health(gpu):
 mcp = MCPServer("gpu-fleet")
 
 
+@mcp.tool(annotations=ToolAnnotations(title="List GPU nodes", read_only_hint=True))
+async def list_nodes() -> list[str]:
+    """The GPU nodes this tool can reach (each function below takes one of these as `node`)."""
+    return sorted(NODES)
+
+
 @mcp.tool(annotations=ToolAnnotations(title="List GPUs and their health", read_only_hint=True))
-async def list_gpus() -> dict:
-    """Live readings for every GPU on the node (temperature °C, utilization %, memory MiB, power W) and any problems."""
-    gpus = await node("GET", "/gpus")
-    status = await node("GET", "/node")
-    return {"node": NODE_NAME, "cordoned": status["cordoned"],
-            "gpus": [{**gpu, "problems": health(gpu)} for gpu in gpus]}
+async def list_gpus(node: str) -> dict:
+    """Live readings for every GPU on a node (temperature °C, utilization %, memory MiB, power W) and any problems."""
+    gpus = await call_node(node, "GET", "/gpus")
+    status = await call_node(node, "GET", "/node")
+    return {"node": node, "cordoned": status["cordoned"], "gpus": [{**gpu, "problems": health(gpu)} for gpu in gpus]}
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List jobs", read_only_hint=True))
-async def list_jobs() -> list[dict]:
-    """Every job on the node: running or finished, its exit code, and whether it ran out of memory."""
-    return await node("GET", "/jobs")
+async def list_jobs(node: str) -> list[dict]:
+    """Every job on a node: running or finished, its exit code, and whether it ran out of memory."""
+    return await call_node(node, "GET", "/jobs")
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Read a job's logs", read_only_hint=True))
-async def job_logs(name: str) -> dict:
+async def job_logs(node: str, name: str) -> dict:
     """The last 40 lines a job printed (errors such as CUDA out of memory show up here)."""
-    return await node("GET", f"/jobs/{name}/logs")
+    return await call_node(node, "GET", job_path(name, "logs"))
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Start a job", read_only_hint=False))
-async def start_job(template: str) -> dict:
-    """Start a job from the node's fixed list: train, memory-hog, crashy-train or burn."""
-    return await node("POST", "/jobs", {"template": template})
+async def start_job(node: str, template: str) -> dict:
+    """Start a job on a node from its fixed list: train, memory-hog, crashy-train or burn."""
+    return await call_node(node, "POST", "/jobs", {"template": template})
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Stop a job", read_only_hint=False, destructive_hint=True))
-async def stop_job(name: str, reason: str) -> dict:
+async def stop_job(node: str, name: str, reason: str) -> dict:
     """Stop a running job (it can't be resumed). Needs a human approval."""
-    return await node("POST", f"/jobs/{name}/stop")
+    return await call_node(node, "POST", job_path(name, "stop"))
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Restart a job", read_only_hint=False, destructive_hint=True))
-async def restart_job(name: str, reason: str) -> dict:
+async def restart_job(node: str, name: str, reason: str) -> dict:
     """Restart a job from the beginning. Needs a human approval."""
-    return await node("POST", f"/jobs/{name}/restart")
+    return await call_node(node, "POST", job_path(name, "restart"))
 
 
-@mcp.tool(annotations=ToolAnnotations(title="Cordon the node", read_only_hint=False, destructive_hint=True))
-async def cordon_node(cordoned: bool, reason: str) -> dict:
-    """Stop (cordoned=true) or resume (false) sending new jobs to this node; running jobs keep running. Needs a human approval."""
-    return await node("POST", "/cordon", {"on": cordoned})
+@mcp.tool(annotations=ToolAnnotations(title="Cordon a node", read_only_hint=False, destructive_hint=True))
+async def cordon_node(node: str, cordoned: bool, reason: str) -> dict:
+    """Stop (cordoned=true) or resume (false) sending new jobs to a node; running jobs keep running. Needs a human approval."""
+    return await call_node(node, "POST", "/cordon", {"on": cordoned})
 
 
 if __name__ == "__main__":

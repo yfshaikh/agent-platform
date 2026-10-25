@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import YAML from "yaml";
-import { api, ApiError, go, handoff, Spec, tellVoice, useCan } from "./api";
+import { api, ApiError, go, handoff, Spec, tellVoice, Tool, useCan } from "./api";
 import { CrashReport, useCrashTest } from "./Crash";
 
 type Template = { id: string; title: string; description: string; name: string; spec: Spec };
@@ -10,6 +10,7 @@ export function Create() {
   const canBuild = useCan("build");
   const canApprove = useCan("approve");
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [registry, setRegistry] = useState<Tool[]>([]);
   const [picked, setPicked] = useState("");
   const [description, setDescription] = useState("");
   const [namespace, setNamespace] = useState("team-demo");
@@ -24,6 +25,7 @@ export function Create() {
   useEffect(() => setGate(""), [test?.status]); // a finished test makes the old gate message stale
   useEffect(() => {
     void api<Template[]>("/templates").then(setTemplates);
+    void api<Tool[]>("/tools").then(setRegistry);
     if (handoff.draft) { // drafted by voice
       load(handoff.draft.name, handoff.draft.spec, handoff.draft.problems);
       handoff.draft = undefined;
@@ -128,6 +130,7 @@ export function Create() {
               <label>Name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
             </div>
             <label htmlFor="spec">Spec</label>
+            <NodePicker specText={specText} registry={registry} onChange={setSpecText} />
             <textarea id="spec" className="yaml" rows={16} value={specText} onChange={(event) => setSpecText(event.target.value)} spellCheck={false} />
             {problems.map((problem) => <p key={problem} className="error">{problem}</p>)}
             {deployed ? <DeployLog {...deployed} /> : canBuild ? (
@@ -188,5 +191,45 @@ function DeployLog({ namespace, name }: { namespace: string; name: string }) {
         </div>
       )}
     </section>
+  );
+}
+
+// For tools that act on machines (gpu-fleet), pick which nodes this agent may use. It edits tools[].nodes in the spec;
+// the agent's runtime refuses calls to any other node.
+function NodePicker({ specText, registry, onChange }: { specText: string; registry: Tool[]; onChange: (text: string) => void }) {
+  let spec: Spec;
+  try {
+    spec = YAML.parse(specText);
+  } catch {
+    return null;
+  }
+  const entries = (spec?.tools ?? []).filter((entry) => registry.find((tool) => tool.name === entry.name)?.nodes?.length);
+  if (!entries.length) return null;
+  function toggle(toolName: string, node: string) {
+    const tools = (spec.tools ?? []).map((entry) => {
+      if (entry.name !== toolName) return entry;
+      const nodes = new Set(entry.nodes ?? []);
+      nodes.has(node) ? nodes.delete(node) : nodes.add(node);
+      return { ...entry, nodes: [...nodes] };
+    });
+    onChange(YAML.stringify({ ...spec, tools }));
+  }
+  return (
+    <fieldset className="node-picker">
+      {entries.map((entry) => (
+        <div key={entry.name}>
+          <legend>Which GPU nodes may {entry.name} act on?</legend>
+          <div className="node-options">
+            {registry.find((tool) => tool.name === entry.name)!.nodes!.map((node) => (
+              <label key={node.name} className={`node-option ${node.connected ? "" : "off"}`}>
+                <input type="checkbox" disabled={!node.connected} checked={(entry.nodes ?? []).includes(node.name)}
+                  onChange={() => toggle(entry.name, node.name)} />
+                <span><strong>{node.name}</strong><br /><span className="small muted">{node.gpu}, {node.connected ? node.provider : "not connected yet"}</span></span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ))}
+    </fieldset>
   );
 }
