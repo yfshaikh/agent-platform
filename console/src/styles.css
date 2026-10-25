@@ -128,7 +128,11 @@ label { display: grid; gap: 0.3rem; font-size: 0.85rem; font-weight: 600; color:
 .canvas .react-flow { --xy-background-color: var(--paper); --xy-background-pattern-color: var(--line); }
 .react-flow__controls { box-shadow: var(--shadow) !important; border-radius: 8px; overflow: hidden; }
 .react-flow__controls-button { background: var(--surface) !important; border-color: var(--line) !important; fill: var(--ink) !important; }
-.empty { position: absolute; inset: 38% 0 auto; text-align: center; z-index: 5; display: grid; gap: 0.5rem; justify-items: center; }
+/* No agents: a card on the left (where agents go), never on top of the tool panels on the right. */
+.empty {
+  position: absolute; left: 1rem; top: 11rem; z-index: 5; width: min(300px, calc(100% - 2rem)); display: grid; gap: 0.4rem;
+  background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; padding: 1rem 1.1rem; box-shadow: var(--shadow);
+}
 .empty strong { font-size: 1.1rem; }
 
 .legend {
@@ -236,6 +240,21 @@ textarea.yaml { font-family: var(--mono); font-size: 0.8rem; line-height: 1.55; 
 .gate { display: grid; gap: 0.7rem; background: var(--human-soft); border-radius: 9px; padding: 0.9rem 1rem; }
 .gate p { color: var(--ink); font-size: 0.9rem; }
 .actions { display: flex; gap: 0.6rem; justify-content: flex-end; flex-wrap: wrap; }
+
+/* ---- deploy log: real cluster events, as a terminal ------------------------------------------------------------- */
+.deploy-log { display: grid; gap: 0.8rem; }
+.terminal {
+  background: #0c1216; color: #cfd8dd; border-radius: 9px; padding: 0.9rem 1rem; max-height: 340px; overflow-y: auto;
+  font-family: var(--mono); font-size: 0.74rem; line-height: 1.65;
+}
+.terminal .line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.terminal .cmd { color: #ffffff; }
+.terminal .cmd span, .terminal .at { color: #6f7f88; }
+.terminal .who { color: #4fb2b6; }
+.terminal .obj { color: #e7c86e; }
+.terminal .warn { color: #ef9a8a; }
+.terminal .wait { color: #6f7f88; }
+.deploy-log .actions { align-items: center; }
 
 /* ---- crash report --------------------------------------------------------------------------------------------- */
 .crash { display: grid; gap: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }

@@ -13,6 +13,7 @@ Run in the cluster (deploy/platform/platform.yaml). Routes live under /api; the 
 """
 import asyncio
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -477,6 +478,41 @@ async def get_agent(namespace: str, name: str, actor=Depends(user)):
                          if not all(status.ready for status in pod.status.container_statuses or [])}][-5:],
         "traces": [dict(row) for row in traces],
     }
+
+
+DEPLOY_STAGES = ["Validated", "ServiceAccount", "Secret", "Deployment", "Service", "NetworkPolicy", "ScalingReplicaSet",
+                 "SuccessfulCreate", "Scheduled", "Pulling", "Pulled", "Created", "Started", "Unhealthy"]
+
+
+def deploy_stage(line):
+    """Where an event falls in a deploy (operator steps in the order it applies objects, then the controllers, then the pod)."""
+    key = line["message"].split()[-2] if line["reason"] == "Applied" else line["reason"]  # "server-side apply <Kind> <name>"
+    return DEPLOY_STAGES.index(key) if key in DEPLOY_STAGES else len(DEPLOY_STAGES)
+
+
+@api.get("/agents/{namespace}/{name}/deploy-log")
+async def deploy_log(namespace: str, name: str, actor=Depends(user)):
+    """What Kubernetes did to bring this agent up, as a timeline: the operator's steps (it posts an event per object it
+    applies), then the Deployment, ReplicaSet and Pod events (scheduled, image pulled, started, probes)."""
+    await check_target(namespace, name)
+    agent = await k8s(kube["custom"].get_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name)
+    created = datetime.datetime.fromisoformat(agent["metadata"]["creationTimestamp"].replace("Z", "+00:00"))
+    events = await k8s(kube["core"].list_namespaced_event, namespace)
+    lines = []
+    for event in events.items:
+        target = event.involved_object
+        mine = (target.kind == "Agent" and target.name == name) or (target.name or "").startswith(f"agent-{name}")
+        moment = event.last_timestamp or event.event_time or event.metadata.creation_timestamp
+        if mine and moment and moment >= created - datetime.timedelta(seconds=1):  # only this deploy, not older pods
+            source = event.source.component or event.reporting_component or ""
+            lines.append({"at": moment.isoformat(), "object": f"{target.kind}/{target.name}", "reason": event.reason,
+                          "message": event.message, "source": "operator" if source == "kopf" else source,
+                          "warning": event.type == "Warning", "second": int(moment.timestamp())})
+    # Events are stamped to the second and several land in the same one; within a second, order them by stage.
+    lines.sort(key=lambda line: (line.pop("second"), deploy_stage(line)))
+    status = agent.get("status", {})
+    return {"phase": status.get("phase", "Pending"), "message": status.get("message"),
+            "ready": status.get("readyReplicas", 0), "lines": lines}
 
 
 @api.post("/agents")

@@ -19,6 +19,7 @@ export function Create() {
   const [busy, setBusy] = useState<"" | "draft" | "deploy">("");
   const [testId, setTestId] = useState<string | null>(null);
   const [gate, setGate] = useState(""); // why the deploy gate said no; approvers may "Deploy anyway"
+  const [deployed, setDeployed] = useState<{ namespace: string; name: string } | null>(null);
   const test = useCrashTest(testId);
   useEffect(() => setGate(""), [test?.status]); // a finished test makes the old gate message stale
   useEffect(() => {
@@ -80,7 +81,7 @@ export function Create() {
     try {
       await api("/agents", { method: "POST", json: { namespace, name, spec, crash_test_id: testId, deploy_anyway: deployAnyway } });
       tellVoice(`The user deployed the ${name} agent to ${namespace}.`);
-      go(`/graph/${namespace}.${name}`);
+      setDeployed({ namespace, name });
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) setGate(error.message);
       else setProblems([(error as Error).message]);
@@ -129,7 +130,7 @@ export function Create() {
             <label htmlFor="spec">Spec</label>
             <textarea id="spec" className="yaml" rows={16} value={specText} onChange={(event) => setSpecText(event.target.value)} spellCheck={false} />
             {problems.map((problem) => <p key={problem} className="error">{problem}</p>)}
-            {canBuild ? (
+            {deployed ? <DeployLog {...deployed} /> : canBuild ? (
               <div className="actions">
                 <button className="secondary" onClick={crashTest} disabled={!name || test?.status === "running"}>
                   {test?.status === "running" ? "Crash test running…" : test ? "Run the crash test again" : "Run crash test"}
@@ -150,5 +151,42 @@ export function Create() {
         )}
       </div>
     </>
+  );
+}
+
+type LogLine = { at: string; object: string; reason: string; message: string; source: string; warning: boolean };
+type Log = { phase: string; message: string | null; ready: number; lines: LogLine[] };
+const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+// What happens after "Deploy", live: the API creates the Agent object, the operator applies the objects it becomes,
+// then Kubernetes schedules the pod, starts the container and waits for its health check. All from real cluster events.
+function DeployLog({ namespace, name }: { namespace: string; name: string }) {
+  const [log, setLog] = useState<Log | null>(null);
+  const done = !!log && ((log.phase === "Running" && log.ready > 0) || log.phase === "Failed");
+  useEffect(() => {
+    if (done) return;
+    const timer = setInterval(() => api<Log>(`/agents/${namespace}/${name}/deploy-log`).then(setLog, () => {}), 1500);
+    return () => clearInterval(timer);
+  }, [namespace, name, done]);
+  return (
+    <section className="deploy-log" aria-label="Deploy log" aria-live="polite">
+      <div className="terminal">
+        <div className="line cmd">$ kubectl apply -f agent.yaml   <span># what the platform API did: created Agent {namespace}/{name}</span></div>
+        {log?.lines.map((line, index) => (
+          <div key={index} className={`line ${line.warning ? "warn" : ""}`}>
+            <span className="at">{clock(line.at)}</span> <span className="who">{line.source || "kubernetes"}</span>{" "}
+            <span className="obj">{line.object}</span> {line.reason}: {line.message}
+          </div>
+        ))}
+        {!done && <div className="line wait">waiting for the cluster…</div>}
+      </div>
+      {log?.phase === "Failed" && <p className="notice bad">{log.message}</p>}
+      {done && log?.phase === "Running" && (
+        <div className="actions">
+          <span className="status ok">{name} is running</span>
+          <button onClick={() => go(`/graph/${namespace}.${name}`)}>Open {name}</button>
+        </div>
+      )}
+    </section>
   );
 }

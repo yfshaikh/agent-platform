@@ -25,3 +25,19 @@ spec:
     search_web: read
     shopping_prices: read
     local_places: read
+---
+apiVersion: platform.hacktx.dev/v1
+kind: Tool
+metadata: {name: gpu-fleet, namespace: platform}
+spec:
+  url: http://tool-gpu-fleet.platform.svc:8000/mcp
+  secretRef: tool-gpu-fleet-token
+  description: Real GPU readings and jobs on NMC²'s GPU node (Brev)
+  classes:
+    list_gpus: read
+    list_jobs: read
+    job_logs: read
+    start_job: write
+    stop_job: sensitive
+    restart_job: sensitive
+    cordon_node: sensitive

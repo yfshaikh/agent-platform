@@ -239,6 +239,9 @@ def set_status(agent, **fields):
         GROUP, VERSION, agent["metadata"]["namespace"], "agents", agent["metadata"]["name"], {"status": fields})
 
 
+announced = set()  # (agent uid, generation) whose objects were already reported as events. ponytail: in memory
+
+
 def reconcile_namespace(namespace, logger):
     """Reconcile every Agent in a namespace. Siblings matter: one agent's talksTo changes another's network rules."""
     agents = list_agents(namespace)
@@ -253,8 +256,14 @@ def reconcile_namespace(namespace, logger):
             set_status(agent, phase="Failed", message="; ".join(problems))
             logger.warning(f"{namespace}/{agent['metadata']['name']} rejected: {problems}")
             continue
+        version = (agent["metadata"]["uid"], agent["metadata"].get("generation"))
+        if version not in announced:
+            kopf.info(agent, reason="Validated", message="spec checked: every tool and function exists, approval rules only tighten")
         for manifest in build_objects(agent, tools, siblings):
             apply(manifest)
+            if version not in announced:  # Kubernetes events, so the console's deploy log can show each step
+                kopf.info(agent, reason="Applied", message=f"server-side apply {manifest['kind']} {manifest['metadata']['name']}")
+        announced.add(version)
         if agent.get("status", {}).get("phase") == "Failed":
             set_status(agent, phase="Pending", message="")
 

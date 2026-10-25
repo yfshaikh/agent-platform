@@ -103,7 +103,12 @@ export function Graph({ agents: snapshot, pulse, selected, pending }: { agents: 
     const classes = Object.fromEntries(tools.map((tool) => [tool.name, tool.classes]));
     const used = new Set(shown.flatMap((agent) => (agent.spec.tools ?? []).map((tool) => tool.name)));
     const visibleTools = team === "all" ? tools : tools.filter((tool) => used.has(tool.name));
-    const nodes: Node[] = visibleTools.map((tool, index) => ({ id: `tool:${tool.name}`, type: "tool", position: { x: 0, y: index * 210 }, data: { tool } }));
+    let toolY = 0; // stack tool panels by their height (one row per function), so taller ones never overlap the next
+    const nodes: Node[] = visibleTools.map((tool) => {
+      const node = { id: `tool:${tool.name}`, type: "tool", position: { x: 0, y: toolY }, data: { tool } };
+      toolY += 110 + Object.keys(tool.classes).length * 19;
+      return node;
+    });
     const edges: Edge[] = [];
     const namespaces = [...new Set(shown.map((agent) => agent.namespace))].sort();
     namespaces.forEach((namespace, column) => {
@@ -151,6 +156,7 @@ export function Graph({ agents: snapshot, pulse, selected, pending }: { agents: 
           {snapshot && agents.length === 0 && (
             <div className="empty">
               <strong>No agents yet</strong>
+              <span className="small muted">The tools on the right are what agents can use. Build an agent to connect one.</span>
               <a href="#/create">Build one from a template</a>
             </div>
           )}

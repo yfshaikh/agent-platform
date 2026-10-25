@@ -13,6 +13,7 @@ import pathlib
 import re
 import secrets
 import subprocess
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ["NODE_TOKEN"]
@@ -23,6 +24,7 @@ TEMPLATES = {path.stem: path.name for path in JOBS_DIR.glob("*.py")}  # train, m
 MAX_JOBS = 4
 JOB_NAME = re.compile(r"^job-[a-z-]+-[0-9a-f]{6}$")
 CORDON_FILE = pathlib.Path(__file__).parent / ".cordoned"  # present = take no new jobs
+capacity = threading.Lock()  # one start or restart at a time, so two requests can't both slip under MAX_JOBS
 GPU_FIELDS = ["index", "name", "temperature.gpu", "utilization.gpu", "memory.used", "memory.total", "power.draw",
               "power.limit", "clocks_throttle_reasons.active", "ecc.errors.uncorrected.volatile.total"]
 
@@ -63,17 +65,23 @@ def jobs():
     return found
 
 
+def check_capacity(running_now):
+    """Refuse new work on a cordoned or full node (call while holding `capacity`)."""
+    if CORDON_FILE.exists():
+        raise ValueError("this node is cordoned: it takes no new jobs")
+    if running_now >= MAX_JOBS:
+        raise ValueError(f"this node already runs {MAX_JOBS} jobs")
+
+
 def start_job(template):
     """Start one job from the fixed list, unless the node is cordoned or full."""
     if template not in TEMPLATES:
         raise ValueError(f"unknown job {template!r}; choose from {sorted(TEMPLATES)}")
-    if CORDON_FILE.exists():
-        raise ValueError("this node is cordoned: it takes no new jobs")
-    if sum(job["status"] == "running" for job in jobs()) >= MAX_JOBS:
-        raise ValueError(f"this node already runs {MAX_JOBS} jobs")
-    name = f"job-{template}-{secrets.token_hex(3)}"
-    code, output = run("docker", "run", "-d", "--gpus", "all", "--name", name, "--label", f"nmc.job={template}",
-                       "-v", f"{JOBS_DIR}:/jobs:ro", IMAGE, "python", f"/jobs/{TEMPLATES[template]}")
+    with capacity:
+        check_capacity(sum(job["status"] == "running" for job in jobs()))
+        name = f"job-{template}-{secrets.token_hex(3)}"
+        code, output = run("docker", "run", "-d", "--gpus", "all", "--name", name, "--label", f"nmc.job={template}",
+                           "-v", f"{JOBS_DIR}:/jobs:ro", IMAGE, "python", f"/jobs/{TEMPLATES[template]}")
     if code != 0:
         raise RuntimeError(f"couldn't start the job: {output[-300:]}")
     return {"name": name, "template": template}
@@ -81,11 +89,18 @@ def start_job(template):
 
 def job_action(name, action):
     """stop, restart or logs for one job container."""
-    if not JOB_NAME.fullmatch(name) or name not in {job["name"] for job in jobs()}:
+    current = {job["name"]: job for job in jobs()}
+    if not JOB_NAME.fullmatch(name) or name not in current:
         raise ValueError(f"no job called {name!r}")
     if action == "logs":
         return {"name": name, "logs": run("docker", "logs", "--tail", "40", name)[1]}
-    code, output = run("docker", action, name)
+    if action == "restart":  # bringing a finished job back is new work: same rules as starting one
+        with capacity:
+            if current[name]["status"] != "running":
+                check_capacity(sum(job["status"] == "running" for job in current.values()))
+            code, output = run("docker", "restart", name)
+    else:
+        code, output = run("docker", action, name)
     if code != 0:
         raise RuntimeError(output[-300:])
     return {"name": name, "done": action}
@@ -93,6 +108,7 @@ def job_action(name, action):
 
 class Handler(BaseHTTPRequestHandler):
     """GET /gpus, /jobs, /jobs/<name>/logs, /node   POST /jobs {template}, /jobs/<name>/stop|restart, /cordon {on}"""
+    timeout = 30  # a client that stops sending can't hold a thread forever
 
     def respond(self, status, body):
         payload = json.dumps(body).encode()
@@ -107,7 +123,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(401, {"error": "bad token"})
         parts = self.path.strip("/").split("/")
         try:
-            length = min(int(self.headers.get("content-length") or 0), 10_000)
+            length = int(self.headers.get("content-length") or 0)
+            if not 0 <= length <= 10_000:
+                raise ValueError("bad content-length")
             body = json.loads(self.rfile.read(length) or b"{}") if method == "POST" else {}
             if not isinstance(body, dict):
                 raise ValueError("the body must be a JSON object")

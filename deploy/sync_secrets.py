@@ -92,8 +92,10 @@ if __name__ == "__main__":
         "AGENT_KEY_MASTER": agent_key_master,
         "PLATFORM_TOKEN": stable_token("platform-api", "PLATFORM_TOKEN"),
     })
-    for tool in ["nessie", "serpapi"]:
+    for tool in ["nessie", "serpapi", "gpu-fleet"]:
         apply_secret(f"tool-{tool}-token", {"TOOL_TOKEN": stable_token(f"tool-{tool}-token", "TOOL_TOKEN")})
+    # The GPU node agent's token: the gpu-fleet tool sends it; deploy/gpu_node_setup.sh copies it to the GPU box.
+    apply_secret("gpu-node-token", {"NODE_TOKEN": stable_token("gpu-node-token", "NODE_TOKEN")})
     voice_keys = ["OPENROUTER_API_KEY", "CARTESIA_API_KEY"]
     if all(os.environ.get(key) for key in voice_keys):
         apply_secret("voice", {key: os.environ[key] for key in voice_keys})

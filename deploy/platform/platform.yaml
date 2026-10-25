@@ -86,7 +86,7 @@ metadata: {name: agent-operator-read-keys, namespace: platform}
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [platform-keys, tool-nessie-token, tool-serpapi-token]
+    resourceNames: [platform-keys, tool-nessie-token, tool-serpapi-token, tool-gpu-fleet-token]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -174,6 +174,40 @@ kind: Service
 metadata: {name: tool-serpapi, namespace: platform}
 spec:
   selector: {platform.hacktx.dev/tool: serpapi}
+  ports: [{port: 8000}]
+---
+# The GPU fleet tool. It reaches the GPU node agent through an SSH tunnel on the Mac running kind
+# (deploy/gpu_tunnel.sh); the GPU box itself opens no ports to the internet.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: tool-gpu-fleet, namespace: platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {platform.hacktx.dev/tool: gpu-fleet}}
+  template:
+    metadata: {labels: {platform.hacktx.dev/tool: gpu-fleet}}
+    spec:
+      containers:
+        - name: tool
+          image: platform-tools:dev
+          imagePullPolicy: Never
+          args: [gpu_fleet_server.py]
+          env:
+            - name: TOOL_TOKEN
+              valueFrom: {secretKeyRef: {name: tool-gpu-fleet-token, key: TOOL_TOKEN}}
+            - name: APPROVAL_PUBLIC_KEY
+              valueFrom: {secretKeyRef: {name: platform-keys, key: APPROVAL_PUBLIC_KEY}}
+            - name: NODE_TOKEN
+              valueFrom: {secretKeyRef: {name: gpu-node-token, key: NODE_TOKEN}}
+            - {name: NODE_URL, value: "http://host.docker.internal:9400"}
+          ports: [{containerPort: 8000}]
+          resources: {requests: {cpu: 20m, memory: 96Mi}, limits: {memory: 256Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: tool-gpu-fleet, namespace: platform}
+spec:
+  selector: {platform.hacktx.dev/tool: gpu-fleet}
   ports: [{port: 8000}]
 ---
 # Who may reach Postgres: the platform API (owner) and agent pods (limited role). Nothing else, even inside the cluster.
