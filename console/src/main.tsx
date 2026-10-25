@@ -95,6 +95,7 @@ function App() {
           </div>
         </nav>
         <main className="page">
+          {route !== "approvals" && <Alarm pending={pending} />}
           {route === "graph" && <Graph agents={agents} pulse={pulse} selected={param} pending={pending} />}
           {route === "create" && <Create key={param} />}
           {route === "gpus" && <Gpus />}
@@ -110,6 +111,35 @@ function App() {
         <Voice />
       </Suspense>
     </MeContext.Provider>
+  );
+}
+
+type Waiting = { id: string; alert_id: string | null; tool: string; arguments: Record<string, unknown> };
+type AlertRow = { id: string; node: string; title: string };
+
+// While a fix for a GPU alert waits for a human, the whole console runs hot: this banner on every page.
+function Alarm({ pending }: { pending: number }) {
+  const [alarms, setAlarms] = useState<{ approval: Waiting; alert: AlertRow }[]>([]);
+  useEffect(() => {
+    if (pending === 0) return setAlarms([]);
+    Promise.all([api<Waiting[]>("/approvals"), api<AlertRow[]>("/gpu-nodes/alerts")]).then(([approvals, alerts]) =>
+      setAlarms(approvals.flatMap((approval) => {
+        const alert = alerts.find((row) => row.id === approval.alert_id);
+        return alert ? [{ approval, alert }] : [];
+      })), () => setAlarms([]));
+  }, [pending]);
+  if (alarms.length === 0) return null;
+  const { approval, alert } = alarms[0];
+  return (
+    <section className="alarm" role="alert">
+      <span className="alarm-dot" aria-hidden />
+      <div>
+        <strong>{alert.node} needs you</strong>
+        <p>{alert.title}. The agents worked it; {approval.tool.replace("__", ".")} {String(approval.arguments.name ?? "")} is waiting for your approval{alarms.length > 1 ? `, plus ${alarms.length - 1} more` : ""}.</p>
+      </div>
+      <a className="alarm-go" href="#/approvals">Review the fix</a>
+      <a href={`#/incidents/${encodeURIComponent(alert.id)}`}>What happened</a>
+    </section>
   );
 }
 

@@ -25,6 +25,7 @@ export function Gpus() {
   const [message, setMessage] = useState("");
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [paging, setPaging] = useState<{ on: boolean; ready: boolean } | null>(null);
+  const [hot, setHot] = useState<string[]>([]); // nodes with a fix waiting for a human
 
   useEffect(() => {
     const load = () => {
@@ -32,6 +33,7 @@ export function Gpus() {
       api<Job[]>(`/gpu-nodes/${selected}/jobs`).then(setJobs, () => setJobs([]));
       api<Alert[]>("/gpu-nodes/alerts").then(setAlerts, () => {});
       api<{ on: boolean; ready: boolean }>("/gpu-nodes/paging").then(setPaging, () => {});
+      api<{ alert_id: string | null }[]>("/approvals").then((items) => setHot(items.flatMap((item) => item.alert_id ? [item.alert_id.split(":")[0]] : [])), () => {});
       if (logsOf) api<{ logs: string }>(`/gpu-nodes/${selected}/jobs/${logsOf}/logs`).then((body) => setLogs(body.logs), () => {});
     };
     load();
@@ -65,7 +67,7 @@ export function Gpus() {
         {nodes?.map((node) => {
           const gpu = node.gpus?.[0];
           return (
-            <button key={node.name} className={`node-card ${node.name === selected ? "on" : ""}`} disabled={!node.connected}
+            <button key={node.name} className={`node-card ${node.name === selected ? "on" : ""} ${hot.includes(node.name) ? "hot" : ""}`} disabled={!node.connected}
               onClick={() => { setSelected(node.name); setLogsOf(null); }} aria-pressed={node.name === selected}>
               <div className="row">
                 <strong>{node.name}</strong>

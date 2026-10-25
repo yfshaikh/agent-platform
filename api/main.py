@@ -696,7 +696,8 @@ async def list_approvals(status: str | None = "pending", actor=Depends(user)):
     """The approval inbox (status=pending by default; status=all for history)."""
     # alert_id: the alert whose run proposed exactly this call (recorded from that run's reply), if any.
     rows = await db().fetch("select id, agent, namespace, payload, mac, status, decided_by, created_at, decided_at, "
-                            "(select a.id from alerts a where a.approval_id = approvals.id limit 1) as alert_id from approvals "
+                            "(select a.id from alerts a where a.approval_id = approvals.id and a.namespace = approvals.namespace "
+                            " and a.agent = approvals.agent limit 1) as alert_id from approvals "
                             "where $1::text = 'all' or status = $1 order by created_at desc limit 100", status)
     shown = []
     for row in rows:

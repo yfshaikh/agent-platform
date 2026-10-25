@@ -345,7 +345,8 @@ async def incident(alert_id: str, actor=Depends(user)):
                          "tools": [{"name": step["name"], "rule": step.get("rule")} for step in row["steps"] or [] if step["type"] == "tool"]}
                         for row in rows), key=lambda step: step["started_at"])
         for row in await db().fetch("select id, agent, namespace, payload, mac, status, decided_by, decided_at from approvals "
-                                    "where id=$1", alert["approval_id"]):  # exactly the call the alert's run proposed
+                                    "where id=$1 and namespace=$2 and agent=$3",  # exactly the call the alert's own agent proposed
+                                    alert["approval_id"], alert["namespace"], alert["agent"]):
             request = verified_request(row)
             if request:  # unverifiable requests are never shown
                 approvals.append({"id": row["id"], "status": row["status"], "decided_by": row["decided_by"], "decided_at": row["decided_at"],
