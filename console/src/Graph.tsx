@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { Background, Controls, Edge, Handle, Node, NodeProps, Position, ReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import YAML from "yaml";
-import { Agent, api, go, Reply, Tool, useCan } from "./api";
+import { Agent, api, go, MeContext, Reply, Tool, useCan } from "./api";
 import type { TracePulse } from "./main";
 
 const PULSE_MS = 4000;
@@ -202,6 +202,15 @@ type Detail = {
 };
 type ChatLine = { from: "you" | "agent" | "platform"; text: string; traceId?: string; approval?: boolean };
 
+// Browser storage can be missing or blocked (private windows): then each drawer just starts a new chat.
+function remembered(key: string) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function remember(key: string, value: string) {
+  try { localStorage.setItem(key, value); } catch { /* not remembered */ }
+  return value;
+}
+
 function Drawer({ agent }: { agent: Agent }) {
   const path = `/agents/${agent.namespace}/${agent.name}`;
   const canBuild = useCan("build");
@@ -211,7 +220,18 @@ function Drawer({ agent }: { agent: Agent }) {
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
-  const [conversation] = useState(() => crypto.randomUUID());
+  // One conversation per person and agent, remembered in this browser, so closing the drawer keeps the chat.
+  const chatKey = `chat:${useContext(MeContext).user}:${path}`;
+  const [conversation, setConversation] = useState(() => remembered(chatKey) ?? remember(chatKey, crypto.randomUUID()));
+
+  useEffect(() => {
+    if (canChat) api<ChatLine[]>(`${path}/conversations/${conversation}`).then((history) => setLines((current) => current.length ? current : history), () => {});
+  }, [path, conversation, canChat]);
+
+  function newChat() {
+    setConversation(remember(chatKey, crypto.randomUUID()));
+    setLines([]);
+  }
 
   useEffect(() => {
     const load = () => api<Detail>(path).then(setDetail, () => {});
@@ -291,6 +311,7 @@ function Drawer({ agent }: { agent: Agent }) {
             ))}
             {busy && <div className="line agent thinking">Working…</div>}
           </div>
+          {lines.length > 0 && !busy && <button type="button" className="link small new-chat" onClick={newChat}>New chat</button>}
           <form onSubmit={send}>
             <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={stopped ? "The agent is stopped" : `Message ${agent.name}`} disabled={stopped || busy} aria-label="Message to the agent" />
             <button disabled={stopped || busy || !draft.trim()}>Send</button>

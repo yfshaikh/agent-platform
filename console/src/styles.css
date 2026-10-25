@@ -210,6 +210,7 @@ label { display: grid; gap: 0.3rem; font-size: 0.85rem; font-weight: 600; color:
 .line a { margin-left: 0.4rem; font-size: 0.8rem; }
 .line.you a { color: inherit; }
 .line.thinking { color: var(--muted); }
+.chat .new-chat { align-self: flex-end; margin: 0 1.4rem 0.3rem; }
 .chat form { display: flex; gap: 0.5rem; padding: 0.9rem 1.4rem; border-top: 1px solid var(--line); }
 dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1rem; margin: 0; font-size: 0.88rem; }
 dl.facts dt { color: var(--muted); }

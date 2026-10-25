@@ -85,6 +85,8 @@ create table if not exists sessions (
   token_hash text primary key, name text not null, permissions text[] not null, expires_at timestamptz not null);
 create table if not exists conversations (
   id text primary key, agent text, namespace text, messages jsonb, updated_at timestamptz default now());
+-- Who started each console chat: only they can read or continue it (conversation ids show up in traces).
+create table if not exists chat_owners (conversation_id text primary key, owner text not null);
 do $$ begin
   if not exists (select from pg_roles where rolname = 'agent_runtime') then create role agent_runtime login; end if;
 end $$;
@@ -641,15 +643,35 @@ async def draft_agent(body: DraftRequest, actor=Depends(can("draft"))):
 class ChatMessage(BaseModel):
     """Body of POST /agents/{ns}/{name}/chat."""
     message: str = Field(min_length=1, max_length=8000)
-    conversation_id: str | None = None
+    conversation_id: str | None = Field(None, max_length=100)
 
 
 @api.post("/agents/{namespace}/{name}/chat")
 async def chat(namespace: str, name: str, body: ChatMessage, actor=Depends(can("chat"))):
     """Send a message to an agent and return its reply (or its request for approval)."""
     await check_target(namespace, name)
+    if body.conversation_id:
+        await check_chat_owner(body.conversation_id, actor)
     status, reply = await call_agent(namespace, name, "/chat", body.model_dump())
     return JSONResponse(reply, status_code=status)
+
+
+async def check_chat_owner(conversation_id, actor):
+    """The first person to use a conversation id owns it; anyone else gets a 403."""
+    owner = await db().fetchval("insert into chat_owners values ($1, $2) on conflict (conversation_id) do update "
+                                "set owner = chat_owners.owner returning owner", conversation_id, str(actor))
+    if owner != str(actor):
+        raise HTTPException(403, "that conversation belongs to someone else")
+
+
+@api.get("/agents/{namespace}/{name}/conversations/{conversation_id}")
+async def conversation(namespace: str, name: str, conversation_id: str, actor=Depends(can("chat"))):
+    """Your conversation's messages as the chat shows them: what you asked and what the agent answered (no tool steps)."""
+    await check_chat_owner(conversation_id, actor)
+    messages = await db().fetchval("select messages from conversations where id=$1 and agent=$2 and namespace=$3",
+                                   conversation_id, name, namespace) or []
+    return [{"from": "you" if message["role"] == "user" else "agent", "text": message["content"]}
+            for message in messages if message["role"] in ("user", "assistant") and message.get("content")]
 
 
 @api.get("/approvals")
