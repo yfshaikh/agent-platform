@@ -195,11 +195,17 @@ async def paging_on():
     return bool(await db().fetchval("select value from settings where key='paging'"))
 
 
+SPOKEN_JOBS = {"train": "training", "crashy-train": "training", "memory-hog": "memory hog", "burn": "full-load"}
+
+
 def spoken(text, limit=500):
     """Agent-written text made safe to read out: markdown, links and phone-number-like digit runs removed, one line, capped.
 
     It stays untrusted (it can quote a customer's job log), which is why the phone agent can't do anything but talk.
     """
+    # Job names are for screens; on a call "job job-train-b8d3d7 (train)" becomes "the training job".
+    text = re.sub(r"\b(?:job )?job-([a-z-]+)-[0-9a-f]{6}(?: \([a-z-]+\))?",
+                  lambda match: f"the {SPOKEN_JOBS.get(match[1], match[1].replace('-', ' '))} job", text)
     text = re.sub(r"https?://\S+|www\.\S+", "[link removed]", text)
     text = re.sub(r"\+?\d[\d\s().-]{6,}\d", "[number removed]", text)
     return re.sub(r"\s+", " ", re.sub(r"[*`#_>|\[\]]+", "", text)).strip()[:limit]
