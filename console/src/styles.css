@@ -132,7 +132,7 @@ label { display: grid; gap: 0.3rem; font-size: 0.85rem; font-weight: 600; color:
 .empty strong { font-size: 1.1rem; }
 
 .legend {
-  position: absolute; left: 1rem; bottom: 1rem; z-index: 5; display: grid; gap: 0.35rem; font-size: 0.8rem; color: var(--muted);
+  position: absolute; left: 1rem; top: 1rem; z-index: 5; display: grid; gap: 0.35rem; font-size: 0.8rem; color: var(--muted);
   background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.8rem; box-shadow: var(--shadow);
 }
 .legend div { display: flex; align-items: center; gap: 0.5rem; }
@@ -304,41 +304,35 @@ td .mono { color: var(--muted); }
 .users td:first-child { white-space: nowrap; font-weight: 600; }
 .users form { display: grid; gap: 0.8rem; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; }
 
-/* ---- voice dock ------------------------------------------------------------------------------------------------ */
-.voice-launch {
-  margin-top: auto; display: flex; align-items: center; gap: 0.6rem; background: none; color: var(--ink);
-  border: 1px solid var(--line); border-radius: 999px; padding: 0.35rem 0.9rem 0.35rem 0.35rem; font-weight: 600;
+/* ---- voice orb: always in the bottom-left corner of the page; a popover opens above it during a call -------------- */
+.voice { position: fixed; left: calc(228px + 1.2rem); bottom: 1.2rem; z-index: 50; display: grid; gap: 0.7rem; justify-items: start; }
+.voice .orb {
+  width: 64px; height: 64px; padding: 0; border-radius: 50%; background: none; border: 0;
+  box-shadow: var(--shadow), 0 0 0 3px var(--surface); transition: transform 0.2s;
 }
-.voice-launch:hover:not(:disabled) { filter: none; background: var(--sunken); }
-.voice-launch[aria-pressed="true"] { border-color: var(--accent); }
-.voice-launch i { width: 26px; height: 26px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #c9f1ee, #4fb2b6 40%, #0b6870 75%); }
-.voice-launch + .whoami { margin-top: 0.8rem; }
-.voice {
-  position: fixed; left: calc(228px + 1.2rem); bottom: 1.2rem; z-index: 50; width: min(380px, calc(100vw - 2rem)); max-height: calc(100vh - 2.8rem);
-  display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden;
+.voice .orb:hover:not(:disabled) { filter: none; transform: scale(1.06); }
+.voice.listening .orb, .voice.speaking .orb { box-shadow: var(--shadow), 0 0 0 3px var(--accent); }
+.voice-pop {
+  width: min(340px, calc(100vw - 2rem)); max-height: 60vh; display: flex; flex-direction: column; gap: 0.6rem; padding: 0.8rem 0.9rem;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
 }
-.voice-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--line); font-weight: 650; font-size: 0.9rem; }
-.voice-head .status { font-weight: 500; }
+.voice-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.88rem; font-weight: 600; }
 .voice-head .close { margin-left: auto; }
-.orb { position: relative; height: 190px; flex: none; background: radial-gradient(ellipse at 50% 60%, var(--accent-soft), transparent 70%); }
-.caption { position: absolute; left: 0.9rem; right: 0.9rem; bottom: 0.5rem; text-align: center; font-size: 0.85rem; color: var(--ink); text-shadow: 0 0 8px var(--surface); }
-.voice-cards { overflow-y: auto; display: grid; gap: 0.6rem; padding: 0 0.9rem 0.9rem; align-content: start; }
+.caption { font-size: 0.9rem; }
+.voice-cards { overflow-y: auto; display: grid; gap: 0.6rem; align-content: start; }
 .vcard { border: 1px solid var(--line); border-radius: 10px; padding: 0.75rem 0.85rem; display: grid; gap: 0.45rem; font-size: 0.85rem; }
 .vcard.human { border-left: 4px solid var(--human); }
 .vcard h4 { margin: 0; font-size: 0.92rem; font-weight: 650; }
 .vcard .kind { font-size: 0.75rem; color: var(--muted); }
 .vcard ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.2rem; }
 .vcard li { display: flex; justify-content: space-between; gap: 0.5rem; }
-.voice-foot { display: grid; gap: 0.5rem; padding: 0.8rem 0.9rem; border-top: 1px solid var(--line); }
-.voice-foot .row { justify-content: space-between; }
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr; }
   .rail { position: static; height: auto; flex-direction: row; flex-wrap: wrap; padding: 0.7rem 1rem; border-right: 0; border-bottom: 1px solid var(--line); }
   .mark { padding: 0 0.5rem 0 0; }
   .whoami { margin: 0 0 0 auto; border: 0; padding: 0; }
-  .voice-launch { margin: 0; }
-  .voice { left: auto; right: 1rem; bottom: 1rem; }
+  .voice { left: auto; right: 1rem; bottom: 1rem; justify-items: end; }
   .page { padding: 1.4rem 1rem 6rem; }
   .map { height: calc(100vh - 7rem); flex-direction: column; }
   .drawer { position: fixed; inset: 0; z-index: 40; width: 100%; }

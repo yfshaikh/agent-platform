@@ -7,7 +7,7 @@ import { Login, Mark } from "./Login";
 import { Approvals, Audit, Traces, Users } from "./pages";
 import "./styles.css";
 
-// The voice dock pulls in Pipecat and the 3D orb, so it loads only when someone opens it.
+// The voice orb pulls in Pipecat, so it loads after the rest of the console.
 const Voice = lazy(() => import("./Voice"));
 
 export type TracePulse = { id: string; agent: string; namespace: string; status: string; tools: string[]; at: number };
@@ -44,7 +44,6 @@ function useEvents(enabled: boolean) {
 function App() {
   const [route, param] = useHash();
   const [me, setMe] = useState<Me | null | "checking">("checking");
-  const [voiceOpen, setVoiceOpen] = useState(false);
   const { agents, pending, pulse } = useEvents(me !== null && me !== "checking");
 
   const loadMe = () =>
@@ -82,9 +81,6 @@ function App() {
               {id === "approvals" && pending > 0 && <span className="count" aria-label={`${pending} waiting`}>{pending}</span>}
             </a>
           ))}
-          <button className="voice-launch" onClick={() => setVoiceOpen(!voiceOpen)} aria-pressed={voiceOpen}>
-            <i aria-hidden /> Talk to the platform
-          </button>
           <div className="whoami">
             <strong>{me.user}</strong>
             <div className="row">
@@ -102,11 +98,9 @@ function App() {
           {route === "users" && <Users />}
         </main>
       </div>
-      {voiceOpen && (
-        <Suspense fallback={null}>
-          <Voice onClose={() => setVoiceOpen(false)} />
-        </Suspense>
-      )}
+      <Suspense fallback={null}>
+        <Voice />
+      </Suspense>
     </MeContext.Provider>
   );
 }

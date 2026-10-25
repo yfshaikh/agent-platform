@@ -1,4 +1,4 @@
-"""Voice server for the agent platform console (Pipecat 1.12). Copied from ../backend and wired to the platform API.
+"""Voice server for the agent platform console (Pipecat 1.12). Originally ../backend (now removed), wired to the platform API.
 
 Browser mic ─► platform API (/api/voice relay) ─► this server: Cartesia Ink-2 (speech-to-text + end-of-turn)
 ─► OpenRouter LLM (+ platform tools) ─► Cartesia Sonic (text-to-speech) ─► back the same way

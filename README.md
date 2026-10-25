@@ -16,7 +16,7 @@ approving always take a click.
 |---|---|
 | `api/` | platform API (FastAPI): agents CRUD, drafts, chat proxy, approval inbox (signs grants), traces, audit, live events, sign-in, people and roles, the voice relay; serves the console |
 | `console/` | web console (React + React Flow): live agent map, build, approvals, traces, audit log, people, voice dock |
-| `voice/` | voice server (Pipecat: Cartesia speech, OpenRouter model), copied from `../backend`; reachable only through the API |
+| `voice/` | voice server (Pipecat: Cartesia speech, OpenRouter model), reachable only through the API |
 | `runtime/` | the agent runtime every agent pod runs: model-and-tool loop, policy, approvals, budgets, traces |
 | `operator/` | kopf operator: turns `Agent` objects into ServiceAccount, Secret, Deployment, Service, NetworkPolicy |
 | `tools/` | MCP tool servers: Nessie bank, SerpApi search |

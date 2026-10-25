@@ -1,14 +1,13 @@
-// The voice dock: talk to the platform. Copied from ../frontend (App.tsx, SplineAvatar.tsx) and wired to the console.
+// The voice orb: talk to the platform. Adapted from ../frontend (App.tsx) and wired to the console.
 // The call goes to /api/voice on the platform API, which checks the session cookie and relays it to the voice server.
 // Voice can look, draft and chat; deploying and approving stay a click on the page the cards link to.
 import { useEffect, useRef, useState } from "react";
 import { PipecatClient } from "@pipecat-ai/client-js";
 // Pinned to 1.7.2 (with client-js 1.13.1). 1.8.0 drops the bot's audio track for good after the first barge-in.
 import { WebSocketTransport } from "@pipecat-ai/websocket-transport";
-import { SplineAvatar, type Frame, type Levels, type Mood } from "./SplineAvatar";
+import { Orb, type Frame, type Levels, type Mood } from "./Orb";
 import { go, handoff, Spec } from "./api";
 
-const SCENE = "https://prod.spline.design/JUo0rIpirijymrdK/scene.splinecode"; // public Spline export (not a secret)
 const VOICE_URL = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/voice`;
 const SILENT: Frame = { voice: { low: 0, mid: 0, high: 0 }, ear: 0 };
 
@@ -55,7 +54,7 @@ function botSpectrum(transport: WebSocketTransport): Float32Array | null {
   }
 }
 
-export default function Voice({ onClose }: { onClose: () => void }) {
+export default function Voice() {
   const read = useRef<() => Frame>(() => SILENT);
   const client = useRef<PipecatClient | null>(null);
   const [status, setStatus] = useState<CallStatus>("idle");
@@ -63,6 +62,7 @@ export default function Voice({ onClose }: { onClose: () => void }) {
   const [cards, setCards] = useState<Card[]>([]); // newest first
   const [caption, setCaption] = useState("");
   const [typed, setTyped] = useState("");
+  const [showCards, setShowCards] = useState(true);
   const live = status !== "idle" && status !== "connecting";
   const mood: Mood = status === "speaking" ? "speaking" : live ? "listening" : "idle";
 
@@ -70,6 +70,7 @@ export default function Voice({ onClose }: { onClose: () => void }) {
   function showCard(message: unknown) {
     if (!isCard(message)) return;
     setCards((current) => [message, ...current.filter((card) => card.id !== message.id)]);
+    setShowCards(true);
     if (message.type === "approvals") go("/approvals");
     if (message.type === "status") go(`/graph/${message.namespace}.${message.name}`);
   }
@@ -139,33 +140,32 @@ export default function Voice({ onClose }: { onClose: () => void }) {
     await client.current.sendText(text);
   }
 
-  const label = { idle: "Not connected", connecting: "Connecting…", listening: "Listening", you: "Hearing you", thinking: "Thinking", speaking: "Speaking" }[status];
+  const label = { idle: "Talk to the platform", connecting: "Connecting…", listening: "Listening", you: "Hearing you", thinking: "Thinking", speaking: "Speaking" }[status];
+  const open = live || status === "connecting" || !!error || (showCards && cards.length > 0);
   return (
-    <aside className="voice" aria-label="Voice assistant">
-      <div className="voice-head">
-        Platform assistant <span className={`status ${live ? "ok" : ""}`}>{label}</span>
-        <button className="close" onClick={async () => { await endCall(); onClose(); }} aria-label="Close voice assistant">×</button>
-      </div>
-      <div className="orb">
-        <SplineAvatar scene={SCENE} read={() => read.current()} mood={mood} />
-        {caption && live && <p className="caption" aria-live="polite">{caption.length > 110 ? "…" + caption.slice(-110) : caption}</p>}
-      </div>
-      {cards.length > 0 && <div className="voice-cards">{cards.map((card) => <CardView key={card.id} card={card} />)}</div>}
-      <div className="voice-foot">
-        {live && (
-          <form onSubmit={sendTyped}>
-            <input value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Or type instead" aria-label="Message the assistant" />
-          </form>
-        )}
-        {error && <p className="error small" role="alert">{error}</p>}
-        <div className="row">
-          <span className="small muted">Try “build me an agent that…” or “anything waiting for approval?”</span>
-          {status === "idle"
-            ? <button onClick={startCall}>Start talking</button>
-            : <button className="secondary" onClick={endCall} disabled={status === "connecting"}>End call</button>}
-        </div>
-      </div>
-    </aside>
+    <div className={`voice ${mood}`}>
+      {open && (
+        <aside className="voice-pop" aria-label="Voice assistant">
+          <div className="voice-head">
+            <span className={`status ${live ? "ok" : ""}`}>{label}</span>
+            <button className="close" onClick={() => { setShowCards(false); setError(null); if (live) void endCall(); }} aria-label="Close">×</button>
+          </div>
+          {caption && live && <p className="caption" aria-live="polite">{caption.length > 140 ? "…" + caption.slice(-140) : caption}</p>}
+          {showCards && cards.length > 0 && <div className="voice-cards">{cards.map((card) => <CardView key={card.id} card={card} />)}</div>}
+          {live && (
+            <form onSubmit={sendTyped}>
+              <input value={typed} onChange={(event) => setTyped(event.target.value)} placeholder="Or type instead" aria-label="Message the assistant" />
+            </form>
+          )}
+          {error && <p className="error small" role="alert">{error}</p>}
+          {status === "idle" && !error && <p className="small muted">Click the orb to talk.</p>}
+        </aside>
+      )}
+      <button className="orb" onClick={status === "idle" ? startCall : endCall} disabled={status === "connecting"}
+        title={status === "idle" ? "Talk to the platform" : "End the call"} aria-label={status === "idle" ? "Talk to the platform" : "End the call"}>
+        <Orb read={() => read.current()} mood={mood} />
+      </button>
+    </div>
   );
 }
 
