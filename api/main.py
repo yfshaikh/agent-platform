@@ -68,6 +68,7 @@ create table if not exists traces (
   id text primary key, agent text, namespace text, conversation_id text, message text, answer text,
   status text, tokens int, started_at timestamptz default now(), seconds real, steps jsonb);
 alter table traces add column if not exists updated_at timestamptz default now();
+alter table traces add column if not exists caller text;  -- the agent that sent the message (null: a person or the platform)
 create table if not exists approvals (
   id text primary key, agent text, namespace text, tool text, arguments jsonb, state jsonb,
   status text default 'pending', decided_by text, created_at timestamptz default now(), decided_at timestamptz);
@@ -674,6 +675,22 @@ async def conversation(namespace: str, name: str, conversation_id: str, actor=De
             for message in messages if message["role"] in ("user", "assistant") and message.get("content")]
 
 
+@api.get("/agents/{namespace}/{name}/activity")
+async def activity(namespace: str, name: str, actor=Depends(user)):
+    """What reached this agent from outside a person's chat (alerts, other agents) and the messages it sent, newest first."""
+    rows = await db().fetch(
+        "select t.id, t.caller, t.message, t.answer, t.status, t.started_at, t.seconds, t.steps, a.id as alert_id, a.title as alert "
+        "from traces t left join alerts a on a.trace_id = t.id where t.namespace=$1 and t.agent=$2 "
+        "and (t.caller is not null or a.id is not null or t.steps @> '[{\"name\": \"platform__send_message\"}]') "
+        "order by t.started_at desc limit 30", namespace, name)
+    return [{"trace_id": row["id"], "at": row["started_at"], "status": row["status"],
+             "from": f"agent {row['caller']}" if row["caller"] else "alert" if row["alert_id"] else "a person",
+             "alert_id": row["alert_id"], "message": row["message"], "answer": row["answer"],
+             "sent": [{"to": step["arguments"].get("to"), "text": step["arguments"].get("text"), "reply": step.get("result")}
+                      for step in row["steps"] or [] if step.get("name") == "platform__send_message" and isinstance(step.get("arguments"), dict)]}
+            for row in rows]
+
+
 @api.get("/approvals")
 async def list_approvals(status: str | None = "pending", actor=Depends(user)):
     """The approval inbox (status=pending by default; status=all for history)."""
@@ -719,7 +736,8 @@ async def decide(approval_id: str, body: Decision, actor=Depends(can("approve"))
 async def list_traces(namespace: str | None = None, agent: str | None = None, limit: int = 50, actor=Depends(user)):
     """Recent requests, newest first (without their steps)."""
     rows = await db().fetch(
-        "select id, agent, namespace, conversation_id, message, answer, status, tokens, started_at, seconds, "
+        "select id, agent, namespace, conversation_id, message, answer, status, tokens, started_at, seconds, caller, "
+        "exists (select 1 from alerts where alerts.trace_id = traces.id) as from_alert, "
         "jsonb_array_length(steps) as step_count from traces where ($1::text is null or namespace=$1) and ($2::text is null or agent=$2) "
         "order by started_at desc limit $3", namespace, agent, min(limit, 200))
     return [dict(row) for row in rows]
@@ -739,6 +757,14 @@ async def get_audit(limit: int = 200, actor=Depends(user)):
     """The audit log, newest first: who changed what, every approval decision, every refusal."""
     rows = await db().fetch("select * from audit order by id desc limit $1", min(limit, 1000))
     return [dict(row) for row in rows]
+
+
+@api.post("/usage/{namespace}/{name}/reset")
+async def reset_usage(namespace: str, name: str, actor=Depends(can("admin"))):
+    """Zero an agent's tokens for today, so it can run again after hitting its daily budget. Audited."""
+    used = await db().fetchval("delete from usage where namespace=$1 and agent=$2 and day=current_date returning tokens", namespace, name)
+    await audit(actor, "usage_reset", f"{namespace}/{name}", {"tokens_cleared": used or 0})
+    return {"namespace": namespace, "name": name, "tokens_today": 0, "tokens_cleared": used or 0}
 
 
 @api.get("/usage")

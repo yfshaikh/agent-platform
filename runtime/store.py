@@ -40,12 +40,12 @@ class Store:
     async def save_trace(self, trace):
         """Insert or replace a trace (a resumed request keeps its trace id and grows its steps)."""
         await self.pool.execute(
-            "insert into traces (id, agent, namespace, conversation_id, message, answer, status, tokens, seconds, steps) "
-            "values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (id) do update set answer=excluded.answer, "
+            "insert into traces (id, agent, namespace, conversation_id, message, answer, status, tokens, seconds, steps, caller) "
+            "values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict (id) do update set answer=excluded.answer, "
             "status=excluded.status, tokens=excluded.tokens, seconds=traces.seconds + excluded.seconds, steps=excluded.steps, "
             "updated_at=now()",
             trace["trace_id"], trace["agent"], trace["namespace"], trace.get("conversation_id"), trace["message"],
-            trace["answer"], trace["status"], trace["tokens"], trace["seconds"], json.dumps(trace["steps"]))
+            trace["answer"], trace["status"], trace["tokens"], trace["seconds"], json.dumps(trace["steps"]), trace.get("caller"))
 
     async def create_approval(self, agent, namespace, tool, arguments, state):
         """Save a paused request waiting for a human; returns the approval id.

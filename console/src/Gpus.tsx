@@ -47,9 +47,6 @@ export function Gpus() {
       setMessage((error as Error).message);
     }
   }
-  async function setPagingOn(on: boolean) {
-    setPaging(await api("/gpu-nodes/paging", { method: "PUT", json: { on } }));
-  }
   async function stop(job: string) {
     if (!confirm(`Stop ${job}? It can't be resumed.`)) return;
     await api(`/gpu-nodes/${selected}/jobs/${job}/stop`, { method: "POST" }).catch((error) => setMessage((error as Error).message));
@@ -112,10 +109,9 @@ export function Gpus() {
           <h2>Alerts</h2>
           <span className="spacer" />
           {paging && (
-            <label className="small paging">
-              <input type="checkbox" checked={paging.on} disabled={!canInject || !paging.ready} onChange={(event) => setPagingOn(event.target.checked)} />
-              {" "}Phone the on-call engineer{paging.ready ? "" : " (not set up)"}
-            </label>
+            <span className="small muted">
+              On-call calls are {paging.on ? "on" : "off"}{canInject && <>. <a href="#/settings">Settings</a></>}
+            </span>
           )}
         </div>
         <p className="small muted">The platform reads each node every 10 s. A crashed job or a GPU at 75°C or more for 30 s wakes the agent subscribed to that node (alerts: true in its spec), which can bring in its team. Any fix still waits for a human; the phone call only explains.</p>

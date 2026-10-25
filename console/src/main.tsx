@@ -7,6 +7,7 @@ import { Login, Mark } from "./Login";
 import { Approvals, Audit, Traces, Users } from "./pages";
 import { Gpus } from "./Gpus";
 import { Incident } from "./Incident";
+import { Settings } from "./Settings";
 import "./styles.css";
 
 // The voice orb pulls in Pipecat, so it loads after the rest of the console.
@@ -64,6 +65,7 @@ function App() {
     ["traces", "Traces", true],
     ["audit", "Audit log", true],
     ["users", "People", can("admin")],
+    ["settings", "Settings", can("admin")],
   ];
   async function logout() {
     await api("/logout", { method: "POST" }).catch(() => undefined);
@@ -97,6 +99,7 @@ function App() {
           {route === "create" && <Create key={param} />}
           {route === "gpus" && <Gpus />}
           {route === "incidents" && param && <Incident id={decodeURIComponent(param)} />}
+          {route === "settings" && can("admin") && <Settings agents={agents ?? []} />}
           {route === "approvals" && <Approvals pending={pending} />}
           {route === "traces" && <Traces traceId={param} />}
           {route === "audit" && <Audit />}

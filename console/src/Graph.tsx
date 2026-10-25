@@ -215,7 +215,7 @@ function Drawer({ agent }: { agent: Agent }) {
   const path = `/agents/${agent.namespace}/${agent.name}`;
   const canBuild = useCan("build");
   const canChat = useCan("chat");
-  const [tab, setTab] = useState<"chat" | "overview" | "spec">(canChat ? "chat" : "overview");
+  const [tab, setTab] = useState<"chat" | "activity" | "overview" | "spec">(canChat ? "chat" : "overview");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [draft, setDraft] = useState("");
@@ -294,6 +294,7 @@ function Drawer({ agent }: { agent: Agent }) {
       </header>
       <div className="tabs" role="tablist">
         {canChat && <button role="tab" aria-selected={tab === "chat"} onClick={() => setTab("chat")}>Chat</button>}
+        <button role="tab" aria-selected={tab === "activity"} onClick={() => setTab("activity")}>Activity</button>
         <button role="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>Overview</button>
         <button role="tab" aria-selected={tab === "spec"} onClick={() => setTab("spec")}>Spec</button>
       </div>
@@ -318,6 +319,8 @@ function Drawer({ agent }: { agent: Agent }) {
           </form>
         </section>
       )}
+
+      {tab === "activity" && <AgentActivity path={path} />}
 
       {tab === "overview" && (
         <div className="tab">
@@ -359,5 +362,46 @@ function Drawer({ agent }: { agent: Agent }) {
         </div>
       )}
     </aside>
+  );
+}
+
+type ActivityItem = { trace_id: string; at: string; from: string; status: string; alert_id: string | null; message: string; answer: string | null;
+  sent: { to: string; text: string; reply: string | null }[] };
+
+// What reached this agent from outside your chat (alerts, other agents) and what it sent to other agents.
+function AgentActivity({ path }: { path: string }) {
+  const [items, setItems] = useState<ActivityItem[] | null>(null);
+  useEffect(() => {
+    const load = () => api<ActivityItem[]>(`${path}/activity`).then(setItems, () => setItems([]));
+    load();
+    const timer = setInterval(load, 3000);
+    return () => clearInterval(timer);
+  }, [path]);
+  if (!items) return <p className="muted small pad">Loading…</p>;
+  return (
+    <section className="activity">
+      {items.length === 0 && <p className="muted small">Nothing yet. Alerts and messages from other agents show up here.</p>}
+      {items.map((item) => (
+        <article key={item.trace_id} className="activity-item">
+          <div className="row small">
+            <strong>From {item.from}</strong>
+            <span className="muted">{new Date(item.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+            <span className="spacer" />
+            {item.alert_id && <a href={`#/incidents/${encodeURIComponent(item.alert_id)}`}>Incident</a>}
+            <a href={`#/traces/${item.trace_id}`}>Trace</a>
+          </div>
+          <div className="line you">{item.message.slice(0, 600)}</div>
+          {item.sent.map((sent, index) => (
+            <div key={index} className="handoff">
+              <div className="line platform">→ to {sent.to}: {sent.text.slice(0, 500)}</div>
+              {sent.reply && <div className="line agent">← {sent.to}: {sent.reply.slice(0, 500)}{sent.reply.length > 500 ? "…" : ""}</div>}
+            </div>
+          ))}
+          {item.answer
+            ? <div className="line agent">{item.answer.slice(0, 600)}{item.answer.length > 600 ? "…" : ""}</div>
+            : item.status === "awaiting_approval" && <div className="line platform">Paused: waiting for a human approval. <a href="#/approvals">Open approvals</a></div>}
+        </article>
+      ))}
+    </section>
   );
 }

@@ -355,7 +355,7 @@ async def advance(state):
             await store.save_conversation(state["conversation_id"], AGENT_NAME, NAMESPACE, state["messages"][1:])
     trace = {
         "trace_id": state["trace_id"], "agent": AGENT_NAME, "namespace": NAMESPACE, "conversation_id": state["conversation_id"],
-        "message": state["message"], "answer": outcome.get("answer", ""), "status": outcome["status"],
+        "caller": state.get("caller"), "message": state["message"], "answer": outcome.get("answer", ""), "status": outcome["status"],
         "tokens": state["tokens"], "seconds": round(time.monotonic() - started, 2), "steps": state["steps"],
     }
     if store:
@@ -393,6 +393,7 @@ async def chat(request: ChatRequest, authorization: str | None = Header(None), x
     history = await store.load_conversation(request.conversation_id, AGENT_NAME, NAMESPACE) if store and request.conversation_id else []
     state = {
         "trace_id": uuid.uuid4().hex[:12], "message": request.message, "conversation_id": request.conversation_id,
+        "caller": x_caller_agent,  # the sending agent (from the runtime-set header), or None for people and the platform
         "depth": x_message_depth, "steps": [], "queue": [], "decisions": {}, "grants": {}, "tokens": 0, "model_calls": 0,
         "messages": [{"role": "system", "content": INSTRUCTIONS}, *history, {"role": "system", "content": note},
                      {"role": "user", "content": request.message}],

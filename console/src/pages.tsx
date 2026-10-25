@@ -97,7 +97,8 @@ export function Approvals({ pending }: { pending: number }) {
   );
 }
 
-type TraceSummary = { id: string; agent: string; namespace: string; message: string; status: string; tokens: number; started_at: string; seconds: number; step_count: number };
+type TraceSummary = { id: string; agent: string; namespace: string; message: string; status: string; tokens: number; started_at: string; seconds: number; step_count: number; caller: string | null; from_alert: boolean };
+const fromWhom = (row: TraceSummary) => (row.caller ? `agent ${row.caller}` : row.from_alert ? "alert" : "a person");
 type Trace = TraceSummary & { answer: string; steps: Step[]; cost_usd: number };
 const statusPill = (status: string) => ({ answered: "ok", awaiting_approval: "human", stopped: "bad", budget_exceeded: "bad" })[status] ?? "";
 
@@ -117,7 +118,7 @@ export function Traces({ traceId }: { traceId?: string }) {
         <div>
           <h1>{trace.message}</h1>
           <p className="muted" style={{ marginTop: "0.4rem" }}>
-            {trace.namespace}/{trace.agent}, {trace.status.replace("_", " ")}, {trace.tokens.toLocaleString()} tokens (about ${trace.cost_usd.toFixed(4)}), {trace.seconds.toFixed(1)}s
+            {trace.namespace}/{trace.agent}, from {fromWhom(trace)}, {trace.status.replace("_", " ")}, {trace.tokens.toLocaleString()} tokens (about ${trace.cost_usd.toFixed(4)}), {trace.seconds.toFixed(1)}s
           </p>
         </div>
         <ol className="timeline">
@@ -153,13 +154,14 @@ export function Traces({ traceId }: { traceId?: string }) {
       <div className="table-wrap">
         <table>
           <thead>
-            <tr><th>When</th><th>Agent</th><th>Message</th><th>Status</th><th className="num">Tokens</th></tr>
+            <tr><th>When</th><th>Agent</th><th>From</th><th>Message</th><th>Status</th><th className="num">Tokens</th></tr>
           </thead>
           <tbody>
             {list.map((row) => (
               <tr key={row.id}>
                 <td className="muted">{when(row.started_at)}</td>
                 <td>{row.namespace}/{row.agent}</td>
+                <td className={row.caller || row.from_alert ? "" : "muted"}>{fromWhom(row)}</td>
                 <td><a href={`#/traces/${row.id}`}>{row.message.slice(0, 80)}</a></td>
                 <td><span className={`pill ${statusPill(row.status)}`}>{row.status.replace("_", " ")}</span></td>
                 <td className="num">{row.tokens.toLocaleString()}</td>

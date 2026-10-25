@@ -46,6 +46,12 @@ DIFF = re.compile(r"```diff\n(.*?)```", re.DOTALL)
 PAGE_EVERY_SECONDS = 300  # at most one phone call per 5 minutes, however many alerts fire
 
 
+def wait_starts(seconds):
+    """SQL for the moment calls stop holding up the next one: `seconds` ago, or the last timer reset, whichever is later."""
+    return (f"greatest(now() - make_interval(secs => {seconds}), "
+            "coalesce((select (value #>> '{}')::timestamptz from settings where key='paging_reset_at'), '-infinity'))")
+
+
 async def call_node(node, method, path, body=None):
     """One call to a node agent; 404 for unknown nodes, 502 if it can't be reached."""
     if node not in NODES:
@@ -203,7 +209,7 @@ async def claim_page_slot(alert_id):
         await connection.execute("select pg_advisory_xact_lock(4242)")  # one claimer at a time
         return await connection.fetchval(
             "update alerts set paged_at=now(), paged='calling the on-call engineer…' where id=$1 and not exists "
-            "(select 1 from alerts where paged_at > now() - make_interval(secs => $2)) returning id", alert_id, PAGE_EVERY_SECONDS)
+            f"(select 1 from alerts where paged_at > {wait_starts('$2')}) returning id", alert_id, PAGE_EVERY_SECONDS)
 
 
 async def page(alert_id, node, title, reply):
@@ -271,7 +277,10 @@ class Paging(BaseModel):
 async def get_paging(actor=Depends(user)):
     """Whether alerts phone the on-call engineer, and whether paging is set up at all."""
     ready = all(os.environ.get(key) for key in ("ONCALL_PHONE", "CARTESIA_API_KEY", "CARTESIA_PAGER_AGENT_ID", "CARTESIA_FROM_NUMBER_ID"))
-    return {"on": await paging_on(), "ready": ready}
+    last = await db().fetchval("select max(paged_at) from alerts")
+    wait = await db().fetchval("select greatest(0, extract(epoch from (max(paged_at) + make_interval(secs => $1) - now())))::int "
+                               f"from alerts where paged_at > {wait_starts('$1')}", PAGE_EVERY_SECONDS)
+    return {"on": await paging_on(), "ready": ready, "every_seconds": PAGE_EVERY_SECONDS, "last_call_at": last, "next_call_in_seconds": wait or 0}
 
 
 @router.put("/paging")
@@ -342,3 +351,12 @@ async def incident(alert_id: str, actor=Depends(user)):
     diffs = [match for step in steps if step["agent"] != alert["agent"] for match in DIFF.findall(step["answer"] or "")]
     paged = await call_outcome(alert_id, alert["paged"])
     return dict(alert) | {"paged": paged, "steps": steps, "approvals": approvals, "prevention_diff": diffs[0] if diffs else None}
+
+
+@router.post("/paging/reset-timer")
+async def reset_paging_timer(actor=Depends(can("admin"))):
+    """Let the next alert call right away, instead of waiting out the 5 minutes since the last call. Audited."""
+    await db().execute("insert into settings values ('paging_reset_at', to_jsonb(now())) "
+                       "on conflict (key) do update set value=excluded.value")
+    await audit(actor, "paging_timer_reset", "on-call", {})
+    return await get_paging(actor)

@@ -425,3 +425,22 @@ pre.diff .hunk { color: var(--muted); }
 .answer.md p, .answer.md ul { margin: 0 0 0.5rem; }
 .answer.md ul { padding-left: 1.2rem; }
 .answer.md code { font-family: var(--mono); font-size: 0.85em; background: var(--sunken); padding: 0 0.25em; border-radius: 3px; }
+
+/* Agent drawer: Activity tab (alerts and agent-to-agent messages) */
+.activity { display: grid; gap: 0.8rem; padding: 1rem 1.4rem; overflow-y: auto; }
+.activity-item { display: grid; gap: 0.4rem; padding-bottom: 0.8rem; border-bottom: 1px solid var(--line); }
+.activity-item .line { max-width: 100%; white-space: pre-wrap; }
+.handoff { display: grid; gap: 0.4rem; padding-left: 0.8rem; border-left: 2px solid var(--accent); }
+
+/* Settings page */
+.settings-card { display: grid; gap: 0.6rem; padding: 1.1rem 1.25rem; margin-bottom: 1.25rem; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.settings-card h2 { margin: 0; font-size: 1.05rem; }
+.settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.switch { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600; }
+.budget-cell { display: grid; gap: 0.25rem; min-width: 10rem; }
+.budget-cell .bar { height: 5px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+.budget-cell .bar span { display: block; height: 100%; background: var(--accent); }
+.budget-cell .bar span.high { background: var(--bad); }
+
+.switch input { width: auto; margin: 0; }
+.settings-row .switch { white-space: nowrap; }
