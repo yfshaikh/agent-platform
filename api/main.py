@@ -190,6 +190,11 @@ async def start_session(name, permissions, hours=SESSION_HOURS):
     return token
 
 
+async def end_sessions(name):
+    """End all of a person's sessions, including any open voice call's (its every platform call is checked, so it stops at once)."""
+    await db().execute("delete from sessions where name = $1 or name = $1 || ' (voice)'", name)
+
+
 def with_session_cookie(response, token):
     """Set the console's session cookie: JavaScript can't read it, and other sites can't send it.
     ponytail: no Secure flag because the demo runs on http://localhost; set it behind TLS."""
@@ -290,12 +295,15 @@ class Login(BaseModel):
 @api.post("/login")
 async def login_with_password(body: Login):
     """Log in with a name and password; sets the session cookie. Five failures lock that name for five minutes."""
-    recent = [moment for moment in failed_logins.get(body.name, []) if moment > time.time() - 300]
-    if len(recent) >= 5:
+    # Count the attempt before any await, so parallel guesses can't all slip past the limit.
+    attempts = failed_logins.setdefault(body.name, [])
+    attempts[:] = [moment for moment in attempts if moment > time.time() - 300]
+    if len(attempts) >= 5:
         raise HTTPException(429, "too many failed attempts; try again in five minutes")
+    attempts.append(time.time())
     row = await db().fetchrow("select password_hash, role from users where name=$1", body.name)
-    if not password_matches(body.password, row["password_hash"] if row else UNKNOWN_USER_HASH) or row is None:
-        failed_logins[body.name] = recent + [time.time()]
+    stored = row["password_hash"] if row else UNKNOWN_USER_HASH
+    if not await asyncio.to_thread(password_matches, body.password, stored) or row is None:  # scrypt off the event loop
         raise HTTPException(401, "wrong name or password")
     failed_logins.pop(body.name, None)
     await audit(body.name, "logged_in", body.name, {"role": row["role"]})
@@ -353,10 +361,11 @@ async def list_users(actor=Depends(can("admin"))):
 @api.post("/users")
 async def save_user(body: NewUser, actor=Depends(can("admin"))):
     """Create a user or reset one; their open sessions end, so a new role takes effect at once."""
+    password_hash = await asyncio.to_thread(hash_password, body.password)
     await db().execute("insert into users (name, password_hash, role) values ($1, $2, $3) "
                        "on conflict (name) do update set password_hash = excluded.password_hash, role = excluded.role",
-                       body.name, hash_password(body.password), body.role)
-    await db().execute("delete from sessions where name=$1", body.name)
+                       body.name, password_hash, body.role)
+    await end_sessions(body.name)
     await audit(actor, "user_saved", body.name, {"role": body.role})
     return {"name": body.name, "role": body.role}
 
@@ -367,7 +376,7 @@ async def delete_user(name: str, actor=Depends(can("admin"))):
     if name == actor:
         raise HTTPException(400, "you can't delete yourself")
     await db().execute("delete from users where name=$1", name)
-    await db().execute("delete from sessions where name=$1", name)
+    await end_sessions(name)
     await audit(actor, "user_deleted", name, {})
     return {"deleted": name}
 

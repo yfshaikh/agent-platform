@@ -90,14 +90,20 @@ def main():
     record("approver gets past the role check to decide", approver.post("/approvals/anything", json={"decision": "approve"}).status_code == 404)
 
     # 3. Sessions end.
+    psql("insert into sessions values ('e2e-voice-probe', 'e2e-builder (voice)', '{read}', now() + interval '1 hour')")
     admin.post("/users", json={"name": "e2e-builder", "role": "viewer", "password": passwords["e2e-builder"]})
     record("changing someone's role signs them out", builder.get("/me").status_code == 401)
+    record("...and ends their open voice call's session too",
+           psql("select count(*) from sessions where token_hash = 'e2e-voice-probe'").strip() == "0")
     approver.post("/logout")
     record("signing out ends the session", httpx.get(f"{api.url}/api/me", cookies={"session": approver.cookies.get("session") or "x"}).status_code == 401)
-    for _ in range(5):
-        sign_in("e2e-approver", "wrong-password")
+    async def guess_in_parallel():
+        async with httpx.AsyncClient(base_url=f"{api.url}/api", timeout=60) as client:
+            return await asyncio.gather(*[client.post("/login", json={"name": "e2e-approver", "password": f"wrong-{index}"}) for index in range(12)])
+    statuses = [response.status_code for response in asyncio.run(guess_in_parallel())]
+    record("12 parallel guesses: at most 5 are even checked", statuses.count(401) <= 5 and statuses.count(429) >= 7, f"{statuses.count(401)} checked")
     _, locked = sign_in("e2e-approver")
-    record("five wrong passwords lock the name for a while", locked.status_code == 429)
+    record("after that, even the right password waits", locked.status_code == 429)
     agent_password = secret_value("platform", "postgres", "AGENT_DB_PASSWORD")
     record("agents' database login can't read sessions or users",
            "permission denied" in psql("select * from sessions", "agent_runtime", agent_password)
