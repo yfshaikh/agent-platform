@@ -391,3 +391,14 @@ details .terminal { margin-top: 0.5rem; }
   .create, .users, .jobs-area { grid-template-columns: 1fr; }
   .review { position: static; }
 }
+
+/* GPU alerts: one row per alert, amber while it waits for a human */
+.alerts { display: grid; gap: 0.5rem; margin-bottom: 1.6rem; }
+.alert-row { display: grid; grid-template-columns: 5.5rem 1fr auto; gap: 0.75rem; align-items: start; padding: 0.65rem 0.8rem;
+  background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--off); border-radius: 7px; }
+.alert-row > span:nth-child(2) { display: grid; gap: 0.2rem; }
+.alert-row.awaiting_approval { border-left-color: var(--human); background: var(--human-soft); }
+.alert-row.investigating, .alert-row.new { border-left-color: var(--accent); }
+.alert-row.error, .alert-row.no-agent { border-left-color: var(--bad); }
+.alert-row q { color: var(--muted); }
+@media (max-width: 640px) { .alert-row { grid-template-columns: 1fr; } }

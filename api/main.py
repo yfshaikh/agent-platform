@@ -115,14 +115,16 @@ async def lifespan(app):
         kubernetes.config.load_kube_config()
     kube["custom"], kube["core"] = kubernetes.client.CustomObjectsApi(), kubernetes.client.CoreV1Api()
     state["db"] = await asyncpg.create_pool(os.environ["ADMIN_DATABASE_URL"], min_size=1, max_size=5, init=setup_connection)
-    import crash  # imported here because these modules import helpers from this one
+    import crash, gpus  # imported here because these modules import helpers from this one
     async with state["db"].acquire() as connection:
-        await connection.execute(SCHEMA + crash.SCHEMA)
+        await connection.execute(SCHEMA + crash.SCHEMA + gpus.SCHEMA)
         password_sql = await connection.fetchval("select format('alter role agent_runtime password %L', $1::text)",
                                                  os.environ["AGENT_DB_PASSWORD"])
         await connection.execute(password_sql)
     state["signing_key"] = Ed25519PrivateKey.from_private_bytes(base64.urlsafe_b64decode(os.environ["APPROVAL_PRIVATE_KEY"]))
+    watcher = asyncio.create_task(gpus.watch())  # GPU alerts -> subscribed agents
     yield
+    watcher.cancel()
     await state["db"].close()
 
 

@@ -3,6 +3,7 @@ import { api, useCan } from "./api";
 
 type Gpu = { index: number; name: string; "temperature.gpu": number; "utilization.gpu": number; "memory.used": number; "memory.total": number; "power.draw": number; "power.limit": number };
 type GpuNode = { name: string; gpu?: string; provider?: string; connected: boolean; reachable?: boolean; error?: string; cordoned?: boolean; gpus?: Gpu[] };
+type Alert = { id: string; at: string; node: string; title: string; agent: string | null; namespace: string | null; status: string; tool: string | null; arguments: Record<string, unknown> | null; trace_id: string | null; answer: string | null };
 type Job = { name: string; template: string; status: string; exit_code: number; oom_killed: boolean; started_at: string; finished_at: string };
 
 const INCIDENTS = [
@@ -22,11 +23,13 @@ export function Gpus() {
   const [logsOf, setLogsOf] = useState<string | null>(null);
   const [logs, setLogs] = useState("");
   const [message, setMessage] = useState("");
+  const [alerts, setAlerts] = useState<Alert[]>([]);
 
   useEffect(() => {
     const load = () => {
       api<GpuNode[]>("/gpu-nodes").then(setNodes, (error) => setMessage((error as Error).message));
       api<Job[]>(`/gpu-nodes/${selected}/jobs`).then(setJobs, () => setJobs([]));
+      api<Alert[]>("/gpu-nodes/alerts").then(setAlerts, () => {});
       if (logsOf) api<{ logs: string }>(`/gpu-nodes/${selected}/jobs/${logsOf}/logs`).then((body) => setLogs(body.logs), () => {});
     };
     load();
@@ -37,7 +40,7 @@ export function Gpus() {
   async function inject(kind: string) {
     try {
       const result = await api<{ what: string }>(`/gpu-nodes/${selected}/incidents`, { method: "POST", json: { kind } });
-      setMessage(`Started on ${selected}: ${result.what}. Watch the jobs below, then ask the triage agent what's wrong.`);
+      setMessage(`Started on ${selected}: ${result.what}. When it goes wrong, an alert wakes the triage agent: watch Alerts below.`);
     } catch (error) {
       setMessage((error as Error).message);
     }
@@ -99,6 +102,26 @@ export function Gpus() {
         </section>
       )}
 
+      <section className="alerts" aria-label="Alerts">
+        <h2>Alerts</h2>
+        <p className="small muted">The platform reads each node every 10 s. A crashed job or a GPU at 75°C or more for 30 s wakes the agent subscribed to that node (alerts: true in its spec). Any fix it proposes still waits for a human.</p>
+        {alerts.length === 0 && <p className="small muted">No alerts yet. Start an incident above to see one.</p>}
+        {alerts.map((alert) => (
+          <div key={alert.id} className={`alert-row ${alert.status}`}>
+            <span className="at muted small">{clock(alert.at)}</span>
+            <span>
+              <strong>{alert.node}: {alert.title}</strong>
+              <span className="small">{alertSays(alert)}</span>
+              {alert.answer && alert.status !== "investigating" && <q className="small">{alert.answer.slice(0, 220)}{alert.answer.length > 220 ? "…" : ""}</q>}
+            </span>
+            <span className="small">
+              {alert.status === "awaiting_approval" && <a href="#/approvals">Review</a>}{" "}
+              {alert.trace_id && <a href={`#/traces/${alert.trace_id}`}>Trace</a>}
+            </span>
+          </div>
+        ))}
+      </section>
+
       <section className="jobs-area">
         <div className="table-wrap">
           <table>
@@ -127,6 +150,17 @@ export function Gpus() {
       </section>
     </>
   );
+}
+
+// What happened to an alert, in words.
+function alertSays(alert: Alert) {
+  const who = alert.agent ? `${alert.namespace}/${alert.agent}` : "";
+  if (alert.status === "new") return "Sending to the subscribed agent…";
+  if (alert.status === "no-agent") return "No running agent is subscribed to this node.";
+  if (alert.status === "investigating") return `${who} is investigating…`;
+  if (alert.status === "awaiting_approval") return `${who} proposes ${alert.tool?.replace("__", ".")} ${JSON.stringify(alert.arguments)}: waiting for a human.`;
+  if (alert.status === "error") return `${who} couldn't be reached.`;
+  return `${who} answered (${alert.status}).`;
 }
 
 function Reading({ label, value, level }: { label: string; value: string; level: number }) {

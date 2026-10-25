@@ -54,6 +54,8 @@ spec:
                     tokensPerDay: {type: integer, minimum: 1, default: 2000000}
                     maxStepsPerRequest: {type: integer, minimum: 1, maximum: 50, default: 12}
                 template: {type: string}
+                # true: GPU alerts on this agent's nodes (a crashed job, a hot GPU) are sent to it as a chat message
+                alerts: {type: boolean}
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
