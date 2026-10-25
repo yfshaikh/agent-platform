@@ -75,12 +75,14 @@ export function Gpus() {
               </div>
               <span className="small muted">{node.gpu} on {node.provider}</span>
               {gpu ? (
+                <>
+                <Thermal celsius={gpu["temperature.gpu"]} />
                 <div className="readings">
-                  <Reading label="Temperature" value={`${gpu["temperature.gpu"]} °C`} level={gpu["temperature.gpu"] / 90} />
                   <Reading label="Utilization" value={`${gpu["utilization.gpu"]}%`} level={gpu["utilization.gpu"] / 100} />
                   <Reading label="Memory" value={`${(gpu["memory.used"] / 1024).toFixed(1)} of ${(gpu["memory.total"] / 1024).toFixed(0)} GB`} level={gpu["memory.used"] / gpu["memory.total"]} />
                   <Reading label="Power" value={`${Math.round(gpu["power.draw"])} of ${Math.round(gpu["power.limit"])} W`} level={gpu["power.draw"] / gpu["power.limit"]} />
                 </div>
+                </>
               ) : (
                 <p className="small muted">{node.connected ? node.error ?? "Reading…" : "Add a second machine: run deploy/gpu_node_setup.sh on it and list it in NODES."}</p>
               )}
@@ -179,6 +181,21 @@ function Reading({ label, value, level }: { label: string; value: string; level:
       <span className="small muted">{label}</span>
       <strong>{value}</strong>
       <div className="bar"><span style={{ width: `${Math.min(100, level * 100)}%` }} className={level > 0.9 ? "high" : ""} /></div>
+    </div>
+  );
+}
+
+// The GPU's temperature on a thermal scale (30 to 90 °C): heat fills the bar up to the reading. The tick is the alert line.
+const ALERT_CELSIUS = 75; // matches HOT_CELSIUS in api/gpus.py
+function Thermal({ celsius }: { celsius: number }) {
+  const at = (value: number) => `${Math.max(0, Math.min(100, ((value - 30) / 60) * 100))}%`;
+  return (
+    <div className={`thermal ${celsius >= ALERT_CELSIUS ? "hot" : ""}`}>
+      <span className="temp">{celsius}<small>°C</small></span>
+      <div className="scale" style={{ "--at": at(celsius) } as React.CSSProperties} role="img" aria-label={`GPU at ${celsius} °C; alerts at ${ALERT_CELSIUS} °C`}>
+        <i style={{ left: at(ALERT_CELSIUS) }} />
+      </div>
+      <div className="scale-labels" aria-hidden><span>30</span><span style={{ left: at(ALERT_CELSIUS) }}>alert at {ALERT_CELSIUS}</span><span>90 °C</span></div>
     </div>
   );
 }
