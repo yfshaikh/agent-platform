@@ -2,7 +2,7 @@
 import os
 
 os.environ.setdefault("NODE_TOKEN", "test")
-from gpu_fleet_server import health, job_path
+from gpu_fleet_server import SOURCE_FILE, health, job_path
 
 GOOD = {"temperature.gpu": 61, "memory.used": 1200, "memory.total": 15360, "clocks_throttle_reasons.active": 0x1,
         "ecc.errors.uncorrected.volatile.total": 0}
@@ -19,4 +19,7 @@ for sneaky in ("../../cordon#", "job-train-1a2b3c/../../cordon", "job-train-1a2b
         raise AssertionError(f"{sneaky} got through")
     except ValueError:
         pass
+assert SOURCE_FILE.fullmatch("node_agent.py") and SOURCE_FILE.fullmatch("jobs/memory-hog.py")
+for sneaky in ("../.env", "jobs/../node_agent.py", "jobs/../../.ssh/id_rsa.py", ".env", "jobs/train.py/../../x.py", "/etc/passwd"):
+    assert not SOURCE_FILE.fullmatch(sneaky), sneaky
 print("gpu fleet checks passed")

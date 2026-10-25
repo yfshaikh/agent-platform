@@ -18,6 +18,7 @@ from common import serve
 # Connected nodes: name -> URL of its node agent (nmc-gpu: the SSH tunnel to the Brev box). ponytail: one token for all nodes
 NODES = json.loads(os.environ.get("NODES", '{"nmc-gpu": "http://host.docker.internal:9400"}'))
 JOB_NAME = re.compile(r"^job-[a-z-]+-[0-9a-f]{6}$")  # same rule as the node: a name can't smuggle in another path
+SOURCE_FILE = re.compile(r"^(node_agent\.py|jobs/[a-z-]+\.py)$")  # the node's own code, nothing else
 HOT_CELSIUS = 83  # where data-center GPUs start slowing themselves down
 # nvidia-smi throttle bit flags worth flagging. Not 0x4 (software power cap): a busy GPU sits at its power limit, that's normal.
 THROTTLE_REASONS = {0x8: "hardware slowdown", 0x20: "software thermal slowdown", 0x40: "hardware thermal slowdown",
@@ -88,6 +89,14 @@ async def list_jobs(node: str) -> list[dict]:
 async def job_logs(node: str, name: str) -> dict:
     """The last 40 lines a job printed (errors such as CUDA out of memory show up here)."""
     return await call_node(node, "GET", job_path(name, "logs"))
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Read the node's code", read_only_hint=True))
+async def read_source(node: str, file: str) -> dict:
+    """The code a node runs: "node_agent.py" (starts and stops jobs) or a job script such as "jobs/train.py"."""
+    if not SOURCE_FILE.fullmatch(file):
+        raise ValueError('file must be "node_agent.py" or "jobs/<template>.py"')
+    return await call_node(node, "GET", f"/source/{file}")
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Start a job", read_only_hint=False))

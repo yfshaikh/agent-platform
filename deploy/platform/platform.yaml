@@ -86,7 +86,7 @@ metadata: {name: agent-operator-read-keys, namespace: platform}
 rules:
   - apiGroups: [""]
     resources: [secrets]
-    resourceNames: [platform-keys, tool-nessie-token, tool-serpapi-token, tool-gpu-fleet-token]
+    resourceNames: [platform-keys, tool-nessie-token, tool-serpapi-token, tool-gpu-fleet-token, tool-runbooks-token]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -210,6 +210,34 @@ spec:
   selector: {platform.hacktx.dev/tool: gpu-fleet}
   ports: [{port: 8000}]
 ---
+# Runbooks: the team's how-tos for known incidents, read-only (tools/runbooks/*.md, baked into the image).
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: tool-runbooks, namespace: platform}
+spec:
+  replicas: 1
+  selector: {matchLabels: {platform.hacktx.dev/tool: runbooks}}
+  template:
+    metadata: {labels: {platform.hacktx.dev/tool: runbooks}}
+    spec:
+      containers:
+        - name: tool
+          image: platform-tools:dev
+          imagePullPolicy: Never
+          args: [runbooks_server.py]
+          env:
+            - name: TOOL_TOKEN
+              valueFrom: {secretKeyRef: {name: tool-runbooks-token, key: TOOL_TOKEN}}
+          ports: [{containerPort: 8000}]
+          resources: {requests: {cpu: 10m, memory: 64Mi}, limits: {memory: 192Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: tool-runbooks, namespace: platform}
+spec:
+  selector: {platform.hacktx.dev/tool: runbooks}
+  ports: [{port: 8000}]
+---
 # Who may reach Postgres: the platform API (owner) and agent pods (limited role). Nothing else, even inside the cluster.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -286,7 +314,7 @@ spec:
         - name: api
           image: platform-api:dev
           imagePullPolicy: Never
-          envFrom: [{secretRef: {name: platform-api}}]
+          envFrom: [{secretRef: {name: platform-api}}, {secretRef: {name: oncall-pager, optional: true}}]  # pager: see README
           env:
             - {name: DRAFT_MODEL, value: "anthropic/claude-haiku-5.5"}
             - {name: NODES, value: '{"nmc-gpu": "http://host.docker.internal:9400"}'}  # the GPUs page reads the same nodes

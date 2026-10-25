@@ -24,12 +24,14 @@ export function Gpus() {
   const [logs, setLogs] = useState("");
   const [message, setMessage] = useState("");
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [paging, setPaging] = useState<{ on: boolean; ready: boolean } | null>(null);
 
   useEffect(() => {
     const load = () => {
       api<GpuNode[]>("/gpu-nodes").then(setNodes, (error) => setMessage((error as Error).message));
       api<Job[]>(`/gpu-nodes/${selected}/jobs`).then(setJobs, () => setJobs([]));
       api<Alert[]>("/gpu-nodes/alerts").then(setAlerts, () => {});
+      api<{ on: boolean; ready: boolean }>("/gpu-nodes/paging").then(setPaging, () => {});
       if (logsOf) api<{ logs: string }>(`/gpu-nodes/${selected}/jobs/${logsOf}/logs`).then((body) => setLogs(body.logs), () => {});
     };
     load();
@@ -44,6 +46,9 @@ export function Gpus() {
     } catch (error) {
       setMessage((error as Error).message);
     }
+  }
+  async function setPagingOn(on: boolean) {
+    setPaging(await api("/gpu-nodes/paging", { method: "PUT", json: { on } }));
   }
   async function stop(job: string) {
     if (!confirm(`Stop ${job}? It can't be resumed.`)) return;
@@ -103,8 +108,17 @@ export function Gpus() {
       )}
 
       <section className="alerts" aria-label="Alerts">
-        <h2>Alerts</h2>
-        <p className="small muted">The platform reads each node every 10 s. A crashed job or a GPU at 75°C or more for 30 s wakes the agent subscribed to that node (alerts: true in its spec). Any fix it proposes still waits for a human.</p>
+        <div className="row">
+          <h2>Alerts</h2>
+          <span className="spacer" />
+          {paging && (
+            <label className="small paging">
+              <input type="checkbox" checked={paging.on} disabled={!canInject || !paging.ready} onChange={(event) => setPagingOn(event.target.checked)} />
+              {" "}Phone the on-call engineer{paging.ready ? "" : " (not set up)"}
+            </label>
+          )}
+        </div>
+        <p className="small muted">The platform reads each node every 10 s. A crashed job or a GPU at 75°C or more for 30 s wakes the agent subscribed to that node (alerts: true in its spec), which can bring in its team. Any fix still waits for a human; the phone call only explains.</p>
         {alerts.length === 0 && <p className="small muted">No alerts yet. Start an incident above to see one.</p>}
         {alerts.map((alert) => (
           <div key={alert.id} className={`alert-row ${alert.status}`}>
@@ -115,8 +129,8 @@ export function Gpus() {
               {alert.answer && alert.status !== "investigating" && <q className="small">{alert.answer.slice(0, 220)}{alert.answer.length > 220 ? "…" : ""}</q>}
             </span>
             <span className="small">
-              {alert.status === "awaiting_approval" && <a href="#/approvals">Review</a>}{" "}
-              {alert.trace_id && <a href={`#/traces/${alert.trace_id}`}>Trace</a>}
+              {alert.status === "awaiting_approval" && <><a href="#/approvals">Review</a>{" · "}</>}
+              <a href={`#/incidents/${encodeURIComponent(alert.id)}`}>Incident</a>
             </span>
           </div>
         ))}

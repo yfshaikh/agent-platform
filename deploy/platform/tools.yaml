@@ -41,7 +41,20 @@ spec:
     list_gpus: read
     list_jobs: read
     job_logs: read
+    read_source: read
     start_job: write
     stop_job: sensitive
     restart_job: sensitive
     cordon_node: sensitive
+---
+apiVersion: platform.hacktx.dev/v1
+kind: Tool
+metadata: {name: runbooks, namespace: platform}
+spec:
+  url: http://tool-runbooks.platform.svc:8000/mcp
+  secretRef: tool-runbooks-token
+  description: NMC²'s runbooks for known GPU incidents (read-only knowledge base)
+  classes:
+    list_runbooks: read
+    search_runbooks: read
+    read_runbook: read

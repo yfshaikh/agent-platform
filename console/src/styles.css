@@ -403,3 +403,25 @@ details .terminal { margin-top: 0.5rem; }
 .alert-row.error, .alert-row.no-agent { border-left-color: var(--bad); }
 .alert-row q { color: var(--muted); }
 @media (max-width: 640px) { .alert-row { grid-template-columns: 1fr; } }
+
+/* Incident page: the agents' steps on the left, the fix and the call on the right, the prevention diff below */
+.incident { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1.5rem; align-items: start; margin-bottom: 1.6rem; }
+@media (max-width: 860px) { .incident { grid-template-columns: 1fr; } }
+.incident h2, section > h2 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+.incident-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; counter-reset: step; }
+.incident-steps li { padding: 0.8rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 0.35rem; }
+.incident-steps .answer { font-size: 0.9rem; max-height: 22rem; overflow: auto; }
+.incident aside { display: grid; gap: 0.75rem; }
+.slip-card { padding: 0.9rem 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.slip-card.waiting { border-color: var(--human); background: var(--human-soft); }
+.slip-card p { margin: 0.25rem 0; }
+pre.diff { margin: 0; padding: 0.9rem 1rem; background: var(--sunken); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto;
+  font-family: var(--mono); font-size: 0.78rem; line-height: 1.5; }
+pre.diff .add { color: var(--ok); }
+pre.diff .del { color: var(--bad); }
+pre.diff .hunk { color: var(--muted); }
+.paging { display: inline-flex; align-items: center; gap: 0.3rem; }
+.answer.md { white-space: normal; }
+.answer.md p, .answer.md ul { margin: 0 0 0.5rem; }
+.answer.md ul { padding-left: 1.2rem; }
+.answer.md code { font-family: var(--mono); font-size: 0.85em; background: var(--sunken); padding: 0 0.25em; border-radius: 3px; }

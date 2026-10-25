@@ -91,14 +91,20 @@ COMMON_ATTACKS = [
 ]
 
 
-def attacks_for(spec):
-    """The attacks for everything the agent can touch: GPU attacks for gpu-fleet, bank attacks for any other tool (or none).
-
-    Both when it has both, so a GPU agent that can also move money can't pass the gate untested on money.
+def attacks_for(spec, tools=None):
+    """The attacks for everything the agent can touch: GPU attacks for gpu-fleet, bank attacks for any other tool that can
+    change something (or for no tools at all). Both when it has both, so a GPU agent that can also move money can't pass
+    the gate untested on money. Without the registry (`tools`), every other tool counts as able to change something.
     """
-    names = {entry.get("name") for entry in spec.get("tools", [])}
-    gpu = GPU_ATTACKS if "gpu-fleet" in names else []
-    return gpu + (BANK_ATTACKS if names - {"gpu-fleet"} or not gpu else []) + COMMON_ATTACKS
+    gpu = GPU_ATTACKS if any(entry.get("name") == "gpu-fleet" for entry in spec.get("tools", [])) else []
+    acts = False
+    for entry in spec.get("tools", []):
+        if entry.get("name") == "gpu-fleet":
+            continue
+        classes = (tools or {}).get(entry.get("name"), {}).get("spec", {}).get("classes")
+        functions = entry.get("allow") or list(classes or {})
+        acts = acts or classes is None or any(classes.get(function, "sensitive") != "read" for function in functions)
+    return gpu + (BANK_ATTACKS if acts or not gpu else []) + COMMON_ATTACKS
 
 
 GPU_MESSAGES = {message for _, _, message in GPU_ATTACKS}  # titles repeat across suites; messages don't
@@ -223,7 +229,7 @@ async def run_test(test_id, name, spec):
             await asyncio.sleep(2)
         else:
             raise RuntimeError("the sandbox agent didn't start")
-        attacks = attacks_for(spec)
+        attacks = attacks_for(spec, await tool_registry())
         await note(test_id, f"sandbox agent is running; sending {len(attacks)} attacks, {CONCURRENCY} at a time")
         limit = asyncio.Semaphore(CONCURRENCY)
 
@@ -281,7 +287,7 @@ async def start_test(body: NewCrashTest, actor=Depends(can("build"))):
                        test_id, body.namespace, body.name, body.spec, spec_hash(body.spec))
     running[test_id] = asyncio.create_task(run_test(test_id, body.name, body.spec))
     await audit(actor, "crash_test_started", f"{body.namespace or 'draft'}/{body.name}", {"crash_test_id": test_id})
-    return {"id": test_id, "status": "running", "attacks": len(attacks_for(body.spec))}
+    return {"id": test_id, "status": "running", "attacks": len(attacks_for(body.spec, await tool_registry()))}
 
 
 @router.get("/{test_id}")
@@ -290,4 +296,4 @@ async def get_test(test_id: str, actor=Depends(user)):
     row = await db().fetchrow("select id, namespace, name, status, score, passed, results, created_at, error, log, spec from crash_tests where id=$1", test_id)
     if row is None:
         raise HTTPException(404, "no such crash test")
-    return {key: value for key, value in row.items() if key != "spec"} | {"pass_score": PASS_SCORE, "attacks": len(attacks_for(row["spec"]))}
+    return {key: value for key, value in row.items() if key != "spec"} | {"pass_score": PASS_SCORE, "attacks": len(attacks_for(row["spec"], await tool_registry()))}

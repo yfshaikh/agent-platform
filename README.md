@@ -8,8 +8,9 @@ The pitch: the agent proposes, the platform enforces.
 
 Built for NMC²'s GPU cloud: their engineers build agents that help run it, and the platform decides what those agents
 may touch. People sign in with their own name and role; a voice assistant can look, draft and chat, but deploying and
-approving always take a click. A real NVIDIA T4 is connected: when a job on it crashes, an alert wakes the triage agent,
-which proposes a fix that waits for a human.
+approving always take a click. A real NVIDIA T4 is connected: when a job on it crashes, an alert wakes a team of agents.
+Triage diagnoses it with the runbooks and proposes the fix now (waiting for a human); the fixer writes a code change so it
+can't happen again; and the platform phones the on-call engineer to explain what's going on.
 
 ## What's here
 
@@ -20,7 +21,7 @@ which proposes a fix that waits for a human.
 | `voice/` | voice server (Pipecat: Cartesia speech, OpenRouter model), reachable only through the API |
 | `runtime/` | the agent runtime every agent pod runs: model-and-tool loop, policy, approvals, node scopes, budgets, traces |
 | `operator/` | kopf operator: turns `Agent` objects into ServiceAccount, Secret, Deployment, Service, NetworkPolicy |
-| `tools/` | MCP tool servers: Nessie bank, SerpApi search, gpu-fleet (the GPU nodes) |
+| `tools/` | MCP tool servers: Nessie bank, SerpApi search, gpu-fleet (the GPU nodes), runbooks (`tools/runbooks/*.md`, read-only) |
 | `gpu-node/` | the node agent that runs on the GPU box: `nvidia-smi` readings and jobs from a fixed list (`gpu-node/jobs/`) |
 | `deploy/crds/` | the `Agent` and `Tool` kinds |
 | `deploy/platform/` | Postgres, operator, API, voice, tool servers, tool registry |
@@ -58,7 +59,7 @@ docker build -t platform-api:dev -f api/Dockerfile . && kind load docker-image p
 kubectl --context kind-f1 -n platform rollout restart deploy/platform-api
 ```
 
-The others: `agent-operator`, `tool-gpu-fleet` / `tool-nessie` / `tool-serpapi` (image `platform-tools:dev`), `voice`.
+The others: `agent-operator`, `tool-gpu-fleet` / `tool-runbooks` / `tool-nessie` / `tool-serpapi` (image `platform-tools:dev`), `voice`.
 Agent pods pick up a new `agent-runtime:dev` when they restart.
 
 ## 3. Start the servers and open the console
@@ -137,7 +138,28 @@ brev ls                                                                 # should
 
 If the GPUs page says "unreachable", check in this order: the instance (`brev ls`), the tunnel, then the service.
 
-## 5. Checks
+## 5. On-call phone calls (Cartesia)
+
+When an alert's fix is waiting for approval, the platform can phone the on-call engineer. A Cartesia agent explains the
+incident from what triage found. It has no way into the platform, so a call can never approve or change anything.
+
+1. In the Cartesia Playground (https://play.cartesia.ai), get a phone number (Phone Numbers page; US only) and note its
+   id (`ap_...`).
+2. Create an agent and note its id (`agent_...`). Its greeting and instructions use these variables, filled in on
+   every call: `{{node}}`, `{{alert}}`, `{{diagnosis}}`, `{{proposed_fix}}`, `{{status}}`. Give them sample values in the
+   Playground so you can test it there.
+3. Add `CARTESIA_PAGER_AGENT_ID`, `CARTESIA_FROM_NUMBER_ID` and `ONCALL_PHONE` (e.g. `+15125550123`) to `.env`, next to
+   `CARTESIA_API_KEY`. Then rerun `sync_secrets.py` and restart the API:
+
+```bash
+uv run --no-project --with cryptography --env-file .env python deploy/sync_secrets.py
+kubectl --context kind-f1 -n platform rollout restart deploy/platform-api
+```
+
+4. On the GPUs page, an admin ticks **Phone the on-call engineer**. It's off by default. There's at most one call every
+   5 minutes, and the number is never logged or shown.
+
+## 6. Checks
 
 ```bash
 uv run --project runtime python deploy/e2e_chunk_a.py                  # core platform (needs deploy/examples/)
@@ -146,6 +168,7 @@ uv run --project api python deploy/e2e_chunk_c.py                      # sign-in
 uv run --project runtime python deploy/e2e_chunk_e.py                  # crash test and deploy gate (~$0.10)
 uv run --project runtime python deploy/e2e_chunk_h.py                  # GPU incident, triage asked in chat (needs the GPU)
 uv run --project runtime python deploy/e2e_chunk_i.py                  # GPU attacks, then an alert wakes triage on its own (needs the GPU)
+uv run --project runtime python deploy/e2e_chunk_j.py                  # the incident team: triage + fixer + runbooks (PAGE=1 also phones on-call)
 ```
 
-Offline checks: `cd runtime && uv run python test_agent.py` · `cd tools && NESSIE_MOCK=1 uv run python test_nessie.py && uv run python test_grants.py && uv run python test_gpu_fleet.py`
+Offline checks: `cd runtime && uv run python test_agent.py` · `cd tools && NESSIE_MOCK=1 uv run python test_nessie.py && uv run python test_grants.py && uv run python test_gpu_fleet.py && uv run python test_runbooks.py`

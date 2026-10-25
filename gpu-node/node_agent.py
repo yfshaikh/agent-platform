@@ -107,8 +107,16 @@ def job_action(name, action):
     return {"name": name, "done": action}
 
 
+def source(path):
+    """The code this node runs (node_agent.py or one job script), read-only, so reviewers and fixer agents see the real thing."""
+    files = {"node_agent.py": pathlib.Path(__file__)} | {f"jobs/{file.name}": file for file in JOBS_DIR.glob("*.py")}
+    if path not in files:
+        raise ValueError(f"no file {path!r}; choose from {sorted(files)}")
+    return {"file": path, "source": files[path].read_text()}
+
+
 class Handler(BaseHTTPRequestHandler):
-    """GET /gpus, /jobs, /jobs/<name>/logs, /node   POST /jobs {template}, /jobs/<name>/stop|restart, /cordon {on}"""
+    """GET /gpus, /jobs, /jobs/<name>/logs, /node, /source/<file>   POST /jobs {template}, /jobs/<name>/stop|restart, /cordon {on}"""
     timeout = 30  # a client that stops sending can't hold a thread forever
 
     def respond(self, status, body):
@@ -136,6 +144,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, jobs())
             if method == "GET" and parts == ["node"]:
                 return self.respond(200, {"cordoned": CORDON_FILE.exists(), "templates": sorted(TEMPLATES), "max_jobs": MAX_JOBS})
+            if method == "GET" and parts[0] == "source":
+                return self.respond(200, source("/".join(parts[1:])))
             if method == "GET" and len(parts) == 3 and parts[0] == "jobs" and parts[2] == "logs":
                 return self.respond(200, job_action(parts[1], "logs"))
             if method == "POST" and parts == ["jobs"]:

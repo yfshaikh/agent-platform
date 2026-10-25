@@ -12,13 +12,13 @@ import json
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from main import GROUP, PLATFORM_NAMESPACE, VERSION, agents_with_usage, audit, call_agent, can, db, k8s, kube, user
+from main import GROUP, PLATFORM_NAMESPACE, VERSION, agents_with_usage, audit, call_agent, can, db, k8s, kube, user, verified_request
 
 router = APIRouter(prefix="/api/gpu-nodes")
 NODES = json.loads(os.environ.get("NODES", "{}"))  # connected nodes: name -> node agent URL (same as the gpu-fleet tool)
@@ -37,7 +37,13 @@ SCHEMA = """
 create table if not exists alerts (
   id text primary key, at timestamptz default now(), node text, kind text, title text, agent text, namespace text,
   status text, tool text, arguments jsonb, trace_id text, answer text);
+alter table alerts add column if not exists paged text;
+alter table alerts add column if not exists paged_at timestamptz;
+create table if not exists settings (key text primary key, value jsonb);
 """
+CARTESIA_CALLS = "https://api.cartesia.ai/agents/calls"
+DIFF = re.compile(r"```diff\n(.*?)```", re.DOTALL)
+PAGE_EVERY_SECONDS = 300  # at most one phone call per 5 minutes, however many alerts fire
 
 
 async def call_node(node, method, path, body=None):
@@ -172,6 +178,108 @@ async def wake(alert_id, node, title):
     await db().execute("update alerts set status=$2, tool=$3, arguments=$4, trace_id=$5, answer=$6 where id=$1", alert_id,
                        reply.get("status", "error") if status == 200 else "error", reply.get("tool"), reply.get("arguments"),
                        reply.get("trace_id"), (reply.get("answer") or str(reply.get("detail", "")))[:1000])
+    if status == 200:
+        await page(alert_id, node, title, reply)
+
+
+async def paging_on():
+    """Whether alerts phone the on-call engineer (an admin switch on the GPUs page; off until someone turns it on)."""
+    return bool(await db().fetchval("select value from settings where key='paging'"))
+
+
+def spoken(text, limit=500):
+    """Agent-written text made safe to read out: markdown, links and phone-number-like digit runs removed, one line, capped.
+
+    It stays untrusted (it can quote a customer's job log), which is why the phone agent can't do anything but talk.
+    """
+    text = re.sub(r"https?://\S+|www\.\S+", "[link removed]", text)
+    text = re.sub(r"\+?\d[\d\s().-]{6,}\d", "[number removed]", text)
+    return re.sub(r"\s+", " ", re.sub(r"[*`#_>|\[\]]+", "", text)).strip()[:limit]
+
+
+async def claim_page_slot(alert_id):
+    """Take the one call allowed per 5 minutes, atomically (alerts can fire together, and several API pods may watch)."""
+    async with db().acquire() as connection, connection.transaction():
+        await connection.execute("select pg_advisory_xact_lock(4242)")  # one claimer at a time
+        return await connection.fetchval(
+            "update alerts set paged_at=now(), paged='calling the on-call engineer…' where id=$1 and not exists "
+            "(select 1 from alerts where paged_at > now() - make_interval(secs => $2)) returning id", alert_id, PAGE_EVERY_SECONDS)
+
+
+async def page(alert_id, node, title, reply):
+    """Phone the on-call engineer through Cartesia with what triage found. The phone agent only explains: it has no way
+    into the platform, so nothing said on a call can approve or change anything. The number is never logged or shown."""
+    phone = os.environ.get("ONCALL_PHONE")
+    if not await paging_on():
+        result = "not called: paging is off"
+    elif not (phone and os.environ.get("CARTESIA_API_KEY") and os.environ.get("CARTESIA_PAGER_AGENT_ID") and os.environ.get("CARTESIA_FROM_NUMBER_ID")):
+        result = "not called: paging isn't set up (see the README)"
+    elif not await claim_page_slot(alert_id):
+        result = "not called: someone was paged in the last 5 minutes"
+    else:
+        arguments = {key: value for key, value in (reply.get("arguments") or {}).items() if key != "reason"}
+        waiting = reply.get("status") == "awaiting_approval"
+        variables = {
+            "node": node, "alert": spoken(title, 200),
+            "diagnosis": "Summary written by the triage agent: " + spoken(
+                reply.get("answer") or (reply.get("arguments") or {}).get("reason") or "no diagnosis yet"),
+            "proposed_fix": spoken(f"{(reply.get('tool') or '').split('__')[-1].replace('_', ' ')} "
+                                   + ", ".join(f"{key} {value}" for key, value in arguments.items()), 200) if waiting else "none",
+            "status": "waiting for a human approval in the NMC² console" if waiting else spoken(str(reply.get("status")), 100),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(CARTESIA_CALLS, json={
+                    "from_number_id": os.environ["CARTESIA_FROM_NUMBER_ID"], "agent_id": os.environ["CARTESIA_PAGER_AGENT_ID"],
+                    "ringing_timeout_seconds": 45, "outbound_calls": [{"to_number": phone, "dynamic_variables": variables}]},
+                    headers={"X-API-Key": os.environ["CARTESIA_API_KEY"], "Cartesia-Version": "2026-08-14"})
+            call = (response.json().get("calls") or [{}])[0] if response.status_code < 400 else {}
+            # Cartesia's own error text is never stored: it could echo the number back.
+            result = (f"call placed: {call['agent_call_id']}" if call.get("agent_call_id")
+                      else f"call failed (Cartesia {'HTTP ' + str(response.status_code) if response.status_code >= 400 else 'returned no call'})")
+        except Exception as error:  # network, bad JSON, an unexpected shape: record it, never crash the alert
+            result = f"call failed: {type(error).__name__}"
+    await db().execute("update alerts set paged=$2 where id=$1", alert_id, result)
+    await audit("alerts", "oncall_paged" if result.startswith("call placed") else "oncall_not_paged", node, {"alert_id": alert_id, "result": result})
+
+
+async def call_outcome(alert_id, paged):
+    """How a placed call went, asked from Cartesia until it ends, then stored (only the status, never its details)."""
+    call_id = paged.removeprefix("call placed: ") if paged and paged.startswith("call placed: ") else None
+    if not call_id or not re.fullmatch(r"[A-Za-z0-9_]+", call_id):
+        return paged
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            call = (await client.get(f"{CARTESIA_CALLS}/{call_id}", headers={
+                "X-API-Key": os.environ["CARTESIA_API_KEY"], "Cartesia-Version": "2026-08-14"})).json()
+        status, reason = str(call.get("status")), str(call.get("end_reason") or "")
+    except Exception:  # Cartesia unreachable or a surprise shape: show what we know
+        return paged
+    if not call.get("end_time"):
+        return f"{paged} ({re.sub(r'[^a-z_ ]', '', status.lower())})"
+    ended = f"call {call_id} ended: {re.sub(r'[^a-z_ ]', '', status.lower())}" + (f" ({re.sub(r'[^a-z_ ]', '', reason.lower())})" if reason else "")
+    await db().execute("update alerts set paged=$2 where id=$1", alert_id, ended)
+    return ended
+
+
+class Paging(BaseModel):
+    """Body of PUT /gpu-nodes/paging."""
+    on: bool
+
+
+@router.get("/paging")
+async def get_paging(actor=Depends(user)):
+    """Whether alerts phone the on-call engineer, and whether paging is set up at all."""
+    ready = all(os.environ.get(key) for key in ("ONCALL_PHONE", "CARTESIA_API_KEY", "CARTESIA_PAGER_AGENT_ID", "CARTESIA_FROM_NUMBER_ID"))
+    return {"on": await paging_on(), "ready": ready}
+
+
+@router.put("/paging")
+async def set_paging(body: Paging, actor=Depends(can("admin"))):
+    """Turn phoning the on-call engineer on or off. Audited."""
+    await db().execute("insert into settings values ('paging', $1) on conflict (key) do update set value=excluded.value", body.on)
+    await audit(actor, "paging_on" if body.on else "paging_off", "on-call", {})
+    return await get_paging(actor)
 
 
 async def watch():
@@ -197,3 +305,40 @@ async def watch():
 async def alerts(actor=Depends(user)):
     """Recent alerts and what the agent did about each, newest first."""
     return [dict(row) for row in await db().fetch("select * from alerts order by at desc limit 30")]
+
+
+@router.get("/alerts/{alert_id:path}")
+async def incident(alert_id: str, actor=Depends(user)):
+    """One alert as an incident: what each agent did (oldest first), the fix waiting for a human, the prevention diff
+    the fixer wrote, and whether the on-call engineer was called."""
+    alert = await db().fetchrow("select * from alerts where id=$1", alert_id)
+    if alert is None:
+        raise HTTPException(404, "no such alert")
+    steps, approvals = [], []
+    first = await db().fetchrow("select * from traces where id=$1", alert["trace_id"]) if alert["trace_id"] else None
+    if first:
+        try:
+            team = (await k8s(kube["custom"].get_namespaced_custom_object, GROUP, VERSION, alert["namespace"], "agents",
+                              alert["agent"]))["spec"].get("talksTo", [])
+        except HTTPException:  # the agent was deleted since: show what it did alone
+            team = []
+        # A trace is saved when its request ends, so started_at is really "finished at"; it began `seconds` earlier.
+        # The agents it messaged ran inside that window.
+        began = first["started_at"] - timedelta(seconds=first["seconds"] or 0)
+        rows = [first, *await db().fetch(
+            "select * from traces where namespace=$1 and agent = any($2::text[]) and started_at between $3 and $4",
+            alert["namespace"], team, began, first["started_at"] + timedelta(seconds=5))]
+        steps = sorted(({"agent": row["agent"], "trace_id": row["id"], "started_at": row["started_at"] - timedelta(seconds=row["seconds"] or 0),
+                         "seconds": row["seconds"], "status": row["status"], "answer": row["answer"],
+                         "tools": [{"name": step["name"], "rule": step.get("rule")} for step in row["steps"] or [] if step["type"] == "tool"]}
+                        for row in rows), key=lambda step: step["started_at"])
+        for row in await db().fetch("select id, agent, namespace, payload, mac, status, decided_by, decided_at from approvals "
+                                    "where namespace=$1 and agent=$2 and created_at >= $3 order by created_at",
+                                    alert["namespace"], alert["agent"], began):
+            request = verified_request(row)
+            if request:  # unverifiable requests are never shown
+                approvals.append({"id": row["id"], "status": row["status"], "decided_by": row["decided_by"], "decided_at": row["decided_at"],
+                                  "tool": request["tool"], "arguments": request["arguments"]})
+    diffs = [match for step in steps if step["agent"] != alert["agent"] for match in DIFF.findall(step["answer"] or "")]
+    paged = await call_outcome(alert_id, alert["paged"])
+    return dict(alert) | {"paged": paged, "steps": steps, "approvals": approvals, "prevention_diff": diffs[0] if diffs else None}

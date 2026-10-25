@@ -5,6 +5,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 COPY *.py ./
+COPY runbooks ./runbooks
 RUN useradd --uid 10001 --no-create-home app
 USER 10001
 ENTRYPOINT ["python"]

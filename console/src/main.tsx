@@ -6,6 +6,7 @@ import { Create } from "./Create";
 import { Login, Mark } from "./Login";
 import { Approvals, Audit, Traces, Users } from "./pages";
 import { Gpus } from "./Gpus";
+import { Incident } from "./Incident";
 import "./styles.css";
 
 // The voice orb pulls in Pipecat, so it loads after the rest of the console.
@@ -95,6 +96,7 @@ function App() {
           {route === "graph" && <Graph agents={agents} pulse={pulse} selected={param} pending={pending} />}
           {route === "create" && <Create key={param} />}
           {route === "gpus" && <Gpus />}
+          {route === "incidents" && param && <Incident id={decodeURIComponent(param)} />}
           {route === "approvals" && <Approvals pending={pending} />}
           {route === "traces" && <Traces traceId={param} />}
           {route === "audit" && <Audit />}

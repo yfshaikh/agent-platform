@@ -92,10 +92,15 @@ if __name__ == "__main__":
         "AGENT_KEY_MASTER": agent_key_master,
         "PLATFORM_TOKEN": stable_token("platform-api", "PLATFORM_TOKEN"),
     })
-    for tool in ["nessie", "serpapi", "gpu-fleet"]:
+    for tool in ["nessie", "serpapi", "gpu-fleet", "runbooks"]:
         apply_secret(f"tool-{tool}-token", {"TOOL_TOKEN": stable_token(f"tool-{tool}-token", "TOOL_TOKEN")})
     # The GPU node agent's token: the gpu-fleet tool sends it; deploy/gpu_node_setup.sh copies it to the GPU box.
     apply_secret("gpu-node-token", {"NODE_TOKEN": stable_token("gpu-node-token", "NODE_TOKEN")})
+    pager_keys = ["CARTESIA_API_KEY", "CARTESIA_PAGER_AGENT_ID", "CARTESIA_FROM_NUMBER_ID", "ONCALL_PHONE"]
+    if all(os.environ.get(key) for key in pager_keys):  # the API phones the on-call engineer through Cartesia
+        apply_secret("oncall-pager", {key: os.environ[key] for key in pager_keys})
+    else:
+        print(f"skipped  secret oncall-pager (needs {', '.join(pager_keys)})")
     voice_keys = ["OPENROUTER_API_KEY", "CARTESIA_API_KEY"]
     if all(os.environ.get(key) for key in voice_keys):
         apply_secret("voice", {key: os.environ[key] for key in voice_keys})
