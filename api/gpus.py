@@ -196,6 +196,10 @@ async def paging_on():
 
 
 SPOKEN_JOBS = {"train": "training", "crashy-train": "training", "memory-hog": "memory hog", "burn": "full-load"}
+SPOKEN_WORDS = [(r"(\d)\s*GiB\b|(\d)\s*GB\b", r"\1\2 gigabytes"), (r"(\d)\s*MiB\b|(\d)\s*MB\b", r"\1\2 megabytes"),
+                (r"\bGiB\b|\bGB\b", "gigabytes"), (r"\bMiB\b|\bMB\b", "megabytes"), (r"(\d)\s*°?\s*C\b", r"\1 degrees"),
+                (r"\bGPUs\b", "G P Us"), (r"\bGPU\b", "G P U"), (r"\bnmc\b", "N M C"), (r"\bOOM\b", "out of memory"),
+                (r"\bECC\b", "E C C"), (r"(\d)\s*W\b", r"\1 watts"), (r"(\d)\s*%", r"\1 percent")]
 
 
 def spoken(text, limit=500):
@@ -206,6 +210,9 @@ def spoken(text, limit=500):
     # Job names are for screens; on a call "job job-train-b8d3d7 (train)" becomes "the training job".
     text = re.sub(r"\b(?:job )?job-([a-z-]+)-[0-9a-f]{6}(?: \([a-z-]+\))?",
                   lambda match: f"the {SPOKEN_JOBS.get(match[1], match[1].replace('-', ' '))} job", text)
+    # Say units and abbreviations the way a person would; the voice guesses wrong ("GiB" as a word, "gpu" as "g-poo").
+    for pattern, said in SPOKEN_WORDS:
+        text = re.sub(pattern, said, text, flags=re.IGNORECASE)
     text = re.sub(r"https?://\S+|www\.\S+", "[link removed]", text)
     text = re.sub(r"\+?\d[\d\s().-]{6,}\d", "[number removed]", text)
     return re.sub(r"\s+", " ", re.sub(r"[*`#_>|\[\]]+", "", text)).strip()[:limit]
@@ -234,7 +241,7 @@ async def page(alert_id, node, title, reply):
         arguments = {key: value for key, value in (reply.get("arguments") or {}).items() if key != "reason"}
         waiting = reply.get("status") == "awaiting_approval"
         variables = {
-            "node": node, "alert": spoken(title, 200),
+            "node": spoken(node.replace("-", " "), 50), "alert": spoken(title, 200),
             "diagnosis": "Summary written by the triage agent: " + spoken(
                 reply.get("answer") or (reply.get("arguments") or {}).get("reason") or "no diagnosis yet"),
             "proposed_fix": spoken(f"{(reply.get('tool') or '').split('__')[-1].replace('_', ' ')} "
