@@ -348,9 +348,12 @@ async def incident(alert_id: str, actor=Depends(user)):
             if request:  # unverifiable requests are never shown
                 approvals.append({"id": row["id"], "status": row["status"], "decided_by": row["decided_by"], "decided_at": row["decided_at"],
                                   "tool": request["tool"], "arguments": request["arguments"]})
-    diffs = [match for step in steps if step["agent"] != alert["agent"] for match in DIFF.findall(step["answer"] or "")]
+    answers = [step["answer"] for step in steps if step["agent"] != alert["agent"] and step["answer"]]
+    diffs = [match for answer in answers for match in DIFF.findall(answer)]
+    prevention = DIFF.sub("", answers[0]).strip() if answers else None  # the fixer's plan in words
     paged = await call_outcome(alert_id, alert["paged"])
-    return dict(alert) | {"paged": paged, "steps": steps, "approvals": approvals, "prevention_diff": diffs[0] if diffs else None}
+    return dict(alert) | {"paged": paged, "steps": steps, "approvals": approvals, "prevention": prevention,
+                          "prevention_diff": diffs[0] if diffs else None}
 
 
 @router.post("/paging/reset-timer")

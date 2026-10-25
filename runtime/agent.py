@@ -236,7 +236,7 @@ async def run_loop(state, tools_by_name, model=call_model, tool_runner=call_tool
                 except Exception as error:  # a broken tool is reported to the model, not a crash
                     result = f"tool error: {error}"
             state["steps"].append({
-                "type": "tool", "name": name, "arguments": arguments, "result": result[:2000], "rule": rule,
+                "type": "tool", "name": name, "arguments": arguments, "result": result[:12000 if name == "platform__send_message" else 2000], "rule": rule,  # a teammate's reply is kept whole
                 "class": tool["class"] if tool else None, "decision": decision, "seconds": round(time.monotonic() - started, 2),
             })
             state["messages"].append({"role": "tool", "tool_call_id": tool_call["id"], "content": result})

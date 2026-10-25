@@ -390,18 +390,22 @@ function AgentActivity({ path }: { path: string }) {
             {item.alert_id && <a href={`#/incidents/${encodeURIComponent(item.alert_id)}`}>Incident</a>}
             <a href={`#/traces/${item.trace_id}`}>Trace</a>
           </div>
-          <div className="line you">{item.message.slice(0, 600)}</div>
+          <div className="line you">{item.message}</div>
           {item.sent.map((sent, index) => (
             <div key={index} className="handoff">
-              <div className="line platform">→ to {sent.to}: {sent.text.slice(0, 500)}</div>
-              {sent.reply && <div className="line agent">← {sent.to}: {sent.reply.slice(0, 500)}{sent.reply.length > 500 ? "…" : ""}</div>}
+              <div className="line platform">→ to {sent.to}: {sent.text}</div>
+              {sent.reply && <div className="line agent">← {sent.to}: {withoutDiff(sent.reply, item.alert_id)}</div>}
             </div>
           ))}
           {item.answer
-            ? <div className="line agent">{item.answer.slice(0, 600)}{item.answer.length > 600 ? "…" : ""}</div>
+            ? <div className="line agent">{withoutDiff(item.answer, item.alert_id)}</div>
             : item.status === "awaiting_approval" && <div className="line platform">Paused: waiting for a human approval. <a href="#/approvals">Open approvals</a></div>}
         </article>
       ))}
     </section>
   );
 }
+
+// Full text, but a code diff is shown once, on the Incident page, not inline in the activity log.
+const withoutDiff = (text: string, alertId: string | null) =>
+  text.replace(/```diff[\s\S]*?```/g, alertId ? "(the diff is on the Incident page)" : "(diff in the trace)").trim();

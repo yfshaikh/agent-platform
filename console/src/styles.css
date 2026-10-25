@@ -479,3 +479,12 @@ pre.diff .hunk { color: var(--muted); }
 
 .switch input { width: auto; margin: 0; }
 .settings-row .switch { white-space: nowrap; }
+
+/* Approval slip: the fixer's prevention plan, folded under the mitigation */
+.slip-prevention { min-width: 0; border-top: 1px solid var(--line); padding-top: 0.7rem; font-size: 0.85rem; }
+.slip-prevention summary { color: var(--accent); font-weight: 600; }
+.slip-prevention .answer { margin: 0.6rem 0; }
+.slip-prevention pre.diff { max-height: 18rem; overflow: auto; }
+.slip { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.slip:has(.slip-prevention[open]) { grid-column: 1 / -1; }
+.slip-prevention .answer { overflow-wrap: anywhere; }

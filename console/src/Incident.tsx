@@ -81,14 +81,20 @@ export function Incident({ id }: { id: string }) {
         <h2>Prevent it happening again</h2>
         <p className="small muted">Written by the fixer against NMC²'s own code. Nothing has been applied: a person reviews it.</p>
         {incident.prevention_diff ? (
-          <pre className="diff">
-            {incident.prevention_diff.split("\n").map((line, index) => (
-              <span key={index} className={line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : ""}>{line}{"\n"}</span>
-            ))}
-          </pre>
+<Diff text={incident.prevention_diff} />
         ) : <p className="muted small">No prevention change yet.</p>}
       </section>
     </>
+  );
+}
+
+export function Diff({ text }: { text: string }) {
+  return (
+    <pre className="diff">
+      {text.split("\n").map((line, index) => (
+        <span key={index} className={line.startsWith("+") && !line.startsWith("+++") ? "add" : line.startsWith("-") && !line.startsWith("---") ? "del" : line.startsWith("@@") ? "hunk" : ""}>{line}{"\n"}</span>
+      ))}
+    </pre>
   );
 }
 
@@ -100,7 +106,7 @@ function inline(text: string): ReactNode[] {
       : <Fragment key={index}>{part}</Fragment>);
 }
 
-function Markdown({ text }: { text: string }) {
+export function Markdown({ text }: { text: string }) {
   const blocks: ReactNode[] = [];
   let list: string[] = [];
   const flush = () => {

@@ -1,5 +1,6 @@
 import { useContext, useEffect, useState } from "react";
 import { api, MeContext, Reply, Step, tellVoice, useCan } from "./api";
+import { Diff, Markdown } from "./Incident";
 
 type Approval = {
   id: string;
@@ -10,6 +11,7 @@ type Approval = {
   status: string;
   decided_by: string | null;
   created_at: string;
+  alert_id: string | null;
 };
 
 const when = (iso: string) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
@@ -77,6 +79,7 @@ export function Approvals({ pending }: { pending: number }) {
                   ))}
                 </dl>
               )}
+              {item.alert_id && <SlipPrevention alertId={item.alert_id} />}
               {outcomes[item.id] && <p className="result">{outcomes[item.id]}</p>}
               <footer>
                 <span>{when(item.created_at)}</span>
@@ -288,5 +291,21 @@ export function Users() {
         </form>
       </div>
     </>
+  );
+}
+
+// On a slip that answers an alert: the fixer's plan to stop it happening again (the slip itself is only the mitigation).
+function SlipPrevention({ alertId }: { alertId: string }) {
+  const [incident, setIncident] = useState<{ prevention: string | null; prevention_diff: string | null } | null>(null);
+  useEffect(() => void api<typeof incident>(`/gpu-nodes/alerts/${encodeURIComponent(alertId)}`).then(setIncident, () => {}), [alertId]);
+  const link = <a href={`#/incidents/${encodeURIComponent(alertId)}`}>Incident</a>;
+  if (!incident?.prevention) return <p className="small muted">This fixes the alert now. {link}</p>;
+  return (
+    <details className="slip-prevention">
+      <summary>Prevention plan from the fixer, so it doesn't happen again</summary>
+      <div className="answer md small"><Markdown text={incident.prevention} /></div>
+      {incident.prevention_diff && <Diff text={incident.prevention_diff} />}
+      <p className="small muted">Not applied: a person reviews the change. {link}</p>
+    </details>
   );
 }
