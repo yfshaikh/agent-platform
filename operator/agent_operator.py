@@ -226,8 +226,11 @@ def build_objects(agent, tools, siblings_by_name):
                             {"name": "AGENT_CALLER_TOKEN", "valueFrom": {"secretKeyRef": {"name": "agent-caller-token", "key": "AGENT_CALLER_TOKEN"}}}],
                         "envFrom": [{"secretRef": {"name": f"{resource_name}-keys"}}],
                         "resources": {"requests": {"cpu": "50m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
-                        "readinessProbe": {"httpGet": {"path": "/healthz", "port": 8000}, "periodSeconds": 5},
-                        "livenessProbe": {"httpGet": {"path": "/healthz", "port": 8000}, "periodSeconds": 20, "initialDelaySeconds": 10},
+                        "readinessProbe": {"httpGet": {"path": "/healthz", "port": 8000}, "periodSeconds": 5, "timeoutSeconds": 3},
+                        # A busy node can take a minute to boot Python and seconds to answer: liveness waits for the
+                        # first healthy answer, then restarts only after a minute of 5 s timeouts (1 s killed busy agents).
+                        "startupProbe": {"httpGet": {"path": "/healthz", "port": 8000}, "periodSeconds": 2, "failureThreshold": 90, "timeoutSeconds": 3},
+                        "livenessProbe": {"httpGet": {"path": "/healthz", "port": 8000}, "periodSeconds": 20, "timeoutSeconds": 5},
                         "securityContext": {"allowPrivilegeEscalation": False, "runAsNonRoot": True, "runAsUser": 10001,
                                             "capabilities": {"drop": ["ALL"]}},
                     }],

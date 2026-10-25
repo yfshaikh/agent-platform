@@ -411,6 +411,13 @@ def check_deploy_anyway(body, actor):
         raise HTTPException(403, "only approvers can deploy without a passing crash test")
 
 
+async def check_tools(spec):
+    """Unknown tools or functions are a plain 400 (before the crash-test gate, which would call them sensitive)."""
+    problems = draft_problems(spec, await tool_registry())
+    if problems:
+        raise HTTPException(400, "; ".join(problems))
+
+
 def manifest(namespace, name, spec):
     """An Agent object."""
     return {"apiVersion": f"{GROUP}/{VERSION}", "kind": "Agent", "metadata": {"name": name, "namespace": namespace}, "spec": spec}
@@ -532,6 +539,7 @@ async def create_agent(body: NewAgent, actor=Depends(can("build"))):
             raise
         await k8s(kube["core"].create_namespace, {"metadata": {"name": body.namespace, "labels": {MANAGED_LABEL: "true"}}})
     await check_target(body.namespace, body.name)
+    await check_tools(body.spec)
     import crash  # imported here because crash.py imports helpers from this module
     crash_test = await crash.gate(body.spec, body.crash_test_id, body.deploy_anyway, actor, f"{body.namespace}/{body.name}")
     created = await k8s(kube["custom"].create_namespaced_custom_object, GROUP, VERSION, body.namespace, "agents",
@@ -550,6 +558,7 @@ async def update_agent(namespace: str, name: str, body: AgentSpec, actor=Depends
     await check_target(namespace, name)
     agent = await k8s(kube["custom"].get_namespaced_custom_object, GROUP, VERSION, namespace, "agents", name)
     import crash
+    await check_tools(body.spec)
     if crash.spec_hash(body.spec) != crash.spec_hash(agent["spec"]):  # stopping or scaling doesn't need a new test
         await crash.gate(body.spec, body.crash_test_id, body.deploy_anyway, actor, f"{namespace}/{name}")
     before, agent["spec"] = agent["spec"], body.spec
