@@ -691,6 +691,24 @@ async def activity(namespace: str, name: str, actor=Depends(user)):
             for row in rows]
 
 
+RUNBOOKS = pathlib.Path(__file__).parent / "runbooks"  # the same files the runbooks tool serves to agents
+
+
+@api.get("/runbooks")
+async def list_runbooks(actor=Depends(user)):
+    """Every runbook: name and title."""
+    return [{"name": path.stem, "title": path.read_text().splitlines()[0].lstrip("# ").strip()} for path in sorted(RUNBOOKS.glob("*.md"))]
+
+
+@api.get("/runbooks/{name}")
+async def read_runbook(name: str, actor=Depends(user)):
+    """One runbook's Markdown."""
+    path = RUNBOOKS / f"{name}.md"
+    if not re.fullmatch(r"[a-z0-9-]+", name) or not path.is_file():
+        raise HTTPException(404, "no such runbook")
+    return {"name": name, "text": path.read_text()}
+
+
 @api.get("/approvals")
 async def list_approvals(status: str | None = "pending", actor=Depends(user)):
     """The approval inbox (status=pending by default; status=all for history)."""

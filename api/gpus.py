@@ -351,12 +351,14 @@ async def incident(alert_id: str, actor=Depends(user)):
             if request:  # unverifiable requests are never shown
                 approvals.append({"id": row["id"], "status": row["status"], "decided_by": row["decided_by"], "decided_at": row["decided_at"],
                                   "tool": request["tool"], "arguments": request["arguments"]})
+    runbooks = sorted({str((step.get("arguments") or {}).get("name")) for row in rows for step in row["steps"] or []
+                       if step.get("name") == "runbooks__read_runbook"}) if first else []
     # The plan and its diff come from the same teammate reply.
     answer = next((step["answer"] for step in steps if step["agent"] != alert["agent"] and step["answer"]), "")
     diffs = DIFF.findall(answer)
     prevention = DIFF.sub("", answer).strip() or None  # the fixer's plan in words
     paged = await call_outcome(alert_id, alert["paged"])
-    return dict(alert) | {"paged": paged, "steps": steps, "approvals": approvals, "prevention": prevention,
+    return dict(alert) | {"paged": paged, "steps": steps, "approvals": approvals, "prevention": prevention, "runbooks": runbooks,
                           "prevention_diff": diffs[0] if diffs else None}
 
 

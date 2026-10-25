@@ -8,6 +8,7 @@ import { Approvals, Audit, Traces, Users } from "./pages";
 import { Gpus } from "./Gpus";
 import { Incident } from "./Incident";
 import { Settings } from "./Settings";
+import { Runbooks } from "./Runbooks";
 import "./styles.css";
 
 // The voice orb pulls in Pipecat, so it loads after the rest of the console.
@@ -45,7 +46,7 @@ function useEvents(enabled: boolean) {
 }
 
 function App() {
-  const [route, param] = useHash();
+  const [route, param, extra] = useHash();
   const [me, setMe] = useState<Me | null | "checking">("checking");
   const { agents, pending, pulse } = useEvents(me !== null && me !== "checking");
 
@@ -62,6 +63,7 @@ function App() {
     ["create", "Build an agent", can("draft") || can("build")],
     ["gpus", "GPUs", true],
     ["approvals", "Approvals", true],
+    ["runbooks", "Runbooks", true],
     ["traces", "Traces", true],
     ["audit", "Audit log", true],
     ["users", "People", can("admin")],
@@ -95,13 +97,14 @@ function App() {
           </div>
         </nav>
         <main className="page">
-          {route !== "approvals" && <Alarm pending={pending} />}
+          {route !== "approvals" && route !== "incidents" && <Alarm pending={pending} />}
           {route === "graph" && <Graph agents={agents} pulse={pulse} selected={param} pending={pending} />}
           {route === "create" && <Create key={param} />}
           {route === "gpus" && <Gpus />}
           {route === "incidents" && param && <Incident id={decodeURIComponent(param)} />}
           {route === "settings" && can("admin") && <Settings agents={agents ?? []} />}
           {route === "approvals" && <Approvals pending={pending} />}
+          {route === "runbooks" && <Runbooks name={param} section={extra && decodeURIComponent(extra)} />}
           {route === "traces" && <Traces traceId={param} />}
           {route === "audit" && <Audit />}
           {route === "users" && <Users />}

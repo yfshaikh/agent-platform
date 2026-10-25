@@ -13,6 +13,7 @@ COPY api/pyproject.toml api/uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 COPY api/*.py ./
+COPY tools/runbooks ./runbooks
 COPY --from=console /console/dist ./static
 RUN useradd --uid 10001 --no-create-home app
 USER 10001

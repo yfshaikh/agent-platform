@@ -504,3 +504,27 @@ pre.diff .hunk { color: var(--muted); }
 .page:has(.map) .alarm { margin: 0; border-radius: 0; }
 .node-card.hot { border-color: var(--human); box-shadow: 0 0 0 3px var(--human-soft), 0 0 36px -8px var(--human); }
 @media (max-width: 640px) { .alarm { grid-template-columns: auto 1fr; } .alarm a { grid-column: 2; justify-self: start; } }
+
+/* Incident page, top: the fix (and the on-call call beside it) comes first */
+.incident-top { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 1rem; align-items: start; margin-bottom: 2rem; }
+@media (max-width: 860px) { .incident-top { grid-template-columns: 1fr; } }
+.fix-card { display: grid; gap: 0.55rem; padding: 1.1rem 1.25rem; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 6px; }
+.fix-card.waiting { border-color: var(--human); border-left-color: var(--human); box-shadow: 0 0 36px -14px var(--human); }
+.fix-call { font-size: 1.05rem; }
+.fix-call code { font-size: 1rem; color: var(--ink); font-weight: 600; }
+.fix-status { font-stretch: 125%; }
+.fix-card.waiting .fix-status { color: var(--human); }
+.incident-section { margin-bottom: 2rem; }
+.incident-section > .row { margin-bottom: 0.6rem; }
+.incident-section > .row h2 { margin: 0; }
+a.button { display: inline-block; text-decoration: none; font-weight: 650; font-size: 0.88rem; padding: 0.5rem 0.95rem; border-radius: 5px; background: var(--accent); color: var(--accent-ink); }
+a.button.human { background: var(--human); color: #fff; }
+a.template { text-decoration: none; }
+
+/* Runbooks: one block per section; the one a fix cited runs hot */
+.runbook { max-width: 860px; }
+.runbook-section { padding: 1rem 1.2rem; margin-bottom: 0.8rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.runbook-section h2 { margin-bottom: 0.4rem; }
+.runbook-section .answer { border-left: 0; padding: 0; }
+.runbook-section.cited { border-color: var(--human); box-shadow: 0 0 36px -14px var(--human); }
+.cited-note { color: var(--human); font-weight: 650; margin-bottom: 0.3rem; }

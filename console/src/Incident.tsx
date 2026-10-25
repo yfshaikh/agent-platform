@@ -5,7 +5,7 @@ type Step = { agent: string; trace_id: string; started_at: string; seconds: numb
 type Approval = { id: string; status: string; decided_by: string | null; tool: string; arguments: Record<string, unknown> };
 type IncidentData = {
   id: string; at: string; node: string; title: string; agent: string | null; namespace: string | null; status: string;
-  paged: string | null; steps: Step[]; approvals: Approval[]; prevention_diff: string | null;
+  paged: string | null; steps: Step[]; approvals: Approval[]; prevention_diff: string | null; runbooks: string[];
 };
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -26,6 +26,8 @@ export function Incident({ id }: { id: string }) {
   if (error) return <p className="error">{error}</p>;
   if (!incident) return <p className="muted">Loading…</p>;
   const fix = incident.approvals[0];
+  const reason = typeof fix?.arguments.reason === "string" ? fix.arguments.reason : "";
+  const cited = reason.match(/Runbook ([a-z0-9-]+),\s*"([^"]+)"/); // triage cites: Runbook <name>, "<section>": ...
   return (
     <>
       <div className="page-head">
@@ -36,53 +38,61 @@ export function Incident({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="incident">
-        <section aria-label="What the agents did">
-          <h2>What the agents did</h2>
-          {incident.steps.length === 0 && <p className="muted small">{incident.status === "no-agent" ? "No running agent is subscribed to this node." : "Triage is investigating…"}</p>}
-          <ol className="incident-steps">
-            {incident.steps.map((step) => (
-              <li key={step.trace_id}>
-                <div className="row">
-                  <strong>{step.agent}</strong>
-                  <span className="muted small">{clock(step.started_at)}{step.seconds ? `, ${Math.round(step.seconds)} s` : ""}</span>
-                  <span className="spacer" />
-                  <a className="small" href={`#/traces/${step.trace_id}`}>Trace</a>
-                </div>
-                <p className="small muted">{step.tools.map((tool) => `${tool.name.replace("__", ".")} (${said[tool.rule ?? ""] ?? tool.rule})`).join(" → ") || "no tools"}</p>
-                {step.answer && <div className="answer md"><Markdown text={step.answer.replace(/```diff[\s\S]*?```/g, "(diff below)")} /></div>}
-              </li>
-            ))}
-          </ol>
+      <div className="incident-top">
+        <section className={`fix-card ${fix?.status === "pending" ? "waiting" : ""}`} aria-label="The fix">
+          <h2>The fix</h2>
+          {fix ? (
+            <>
+              <p className="fix-call"><code>{fix.tool.replace("__", ".")}</code> {Object.entries(fix.arguments).filter(([key]) => key !== "reason").map(([key, value]) => `${key}=${value}`).join(", ")}</p>
+              {cited && (
+                <p className="small">Following <a href={`#/runbooks/${cited[1]}/${encodeURIComponent(cited[2])}`}>{cited[1]}, “{cited[2]}”</a></p>
+              )}
+              {reason && <p className="small muted">{cited ? reason.slice(cited.index! + cited[0].length).replace(/^:\s*/, "") : reason}</p>}
+              <div className="row">
+                {fix.status === "pending"
+                  ? <><strong className="fix-status">Waiting for a human</strong><span className="spacer" /><a className="button human" href="#/approvals">Review the fix</a></>
+                  : <strong className="fix-status">{fix.status === "approve" ? "Approved" : fix.status === "deny" ? "Denied" : fix.status} by {fix.decided_by ?? "the platform"}</strong>}
+              </div>
+            </>
+          ) : <p className="muted small">No fix proposed yet.</p>}
         </section>
-
-        <aside>
-          <section className={`slip-card ${fix?.status === "pending" ? "waiting" : ""}`} aria-label="Fix now">
-            <h2>Fix now</h2>
-            {fix ? (
-              <>
-                <p><strong>{fix.tool.replace("__", ".")}</strong> {Object.entries(fix.arguments).filter(([key]) => key !== "reason").map(([key, value]) => `${key}=${value}`).join(", ")}</p>
-                {typeof fix.arguments.reason === "string" && <p className="small">{fix.arguments.reason}</p>}
-                <p className="small">
-                  {fix.status === "pending" ? <>Waiting for a human. <a href="#/approvals">Review it</a></> : `${fix.status} by ${fix.decided_by ?? "the platform"}`}
-                </p>
-              </>
-            ) : <p className="muted small">No fix proposed yet.</p>}
-          </section>
-
-          <section className="slip-card" aria-label="On-call">
-            <h2>On-call</h2>
-            <p className="small">{incident.paged ?? "Not paged yet."}</p>
-          </section>
-        </aside>
+        <section className="slip-card" aria-label="On-call">
+          <h2>On-call</h2>
+          <p className="small">{incident.paged ?? "Not paged yet."}</p>
+        </section>
       </div>
 
-      <section aria-label="Prevention">
+      <section aria-label="What the agents did" className="incident-section">
+        <div className="row">
+          <h2>What the agents did</h2>
+          <span className="spacer" />
+          {incident.runbooks.length > 0 && (
+            <span className="small muted">Runbooks read: {incident.runbooks.map((name, index) => (
+              <Fragment key={name}>{index > 0 && ", "}<a href={`#/runbooks/${name}`}>{name}</a></Fragment>
+            ))}</span>
+          )}
+        </div>
+        {incident.steps.length === 0 && <p className="muted small">{incident.status === "no-agent" ? "No running agent is subscribed to this node." : "Triage is investigating…"}</p>}
+        <ol className="incident-steps">
+          {incident.steps.map((step) => (
+            <li key={step.trace_id}>
+              <div className="row">
+                <strong>{step.agent}</strong>
+                <span className="muted small">{clock(step.started_at)}{step.seconds ? `, ${Math.round(step.seconds)} s` : ""}</span>
+                <span className="spacer" />
+                <a className="small" href={`#/traces/${step.trace_id}`}>Trace</a>
+              </div>
+              <p className="small muted">{step.tools.map((tool) => `${tool.name.replace("__", ".")} (${said[tool.rule ?? ""] ?? tool.rule})`).join(" → ") || "no tools"}</p>
+              {step.answer && <div className="answer md"><Markdown text={step.answer.replace(/```diff[\s\S]*?```/g, "(diff below)")} /></div>}
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section aria-label="Prevention" className="incident-section">
         <h2>Prevent it happening again</h2>
         <p className="small muted">Written by the fixer against NMC²'s own code. Nothing has been applied: a person reviews it.</p>
-        {incident.prevention_diff ? (
-<Diff text={incident.prevention_diff} />
-        ) : <p className="muted small">No prevention change yet.</p>}
+        {incident.prevention_diff ? <Diff text={incident.prevention_diff} /> : <p className="muted small">No prevention change yet.</p>}
       </section>
     </>
   );
@@ -116,6 +126,7 @@ export function Markdown({ text }: { text: string }) {
   for (const line of text.split("\n")) {
     const item = line.match(/^\s*[-*] (.*)/);
     if (item) { list.push(item[1]); continue; }
+    if (list.length && /^\s+\S/.test(line)) { list[list.length - 1] += " " + line.trim(); continue; }
     flush();
     if (line.trim()) blocks.push(<p key={blocks.length}>{inline(line.replace(/^#+\s*/, ""))}</p>);
   }
