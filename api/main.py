@@ -694,11 +694,9 @@ async def activity(namespace: str, name: str, actor=Depends(user)):
 @api.get("/approvals")
 async def list_approvals(status: str | None = "pending", actor=Depends(user)):
     """The approval inbox (status=pending by default; status=all for history)."""
-    # alert_id: the alert this call answers, if any (the agent's latest alert in the 15 minutes before it was proposed).
+    # alert_id: the alert whose run proposed exactly this call (recorded from that run's reply), if any.
     rows = await db().fetch("select id, agent, namespace, payload, mac, status, decided_by, created_at, decided_at, "
-                            "(select a.id from alerts a where a.namespace = approvals.namespace and a.agent = approvals.agent "
-                            " and a.at between approvals.created_at - interval '15 minutes' and approvals.created_at "
-                            " order by a.at desc limit 1) as alert_id from approvals "
+                            "(select a.id from alerts a where a.approval_id = approvals.id limit 1) as alert_id from approvals "
                             "where $1::text = 'all' or status = $1 order by created_at desc limit 100", status)
     shown = []
     for row in rows:

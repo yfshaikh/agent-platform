@@ -39,6 +39,7 @@ create table if not exists alerts (
   status text, tool text, arguments jsonb, trace_id text, answer text);
 alter table alerts add column if not exists paged text;
 alter table alerts add column if not exists paged_at timestamptz;
+alter table alerts add column if not exists approval_id text;
 create table if not exists settings (key text primary key, value jsonb);
 """
 CARTESIA_CALLS = "https://api.cartesia.ai/agents/calls"
@@ -181,9 +182,10 @@ async def wake(alert_id, node, title):
                                          {"message": f"ALERT from {node}: {title}. Investigate and fix it."})
     except HTTPException as error:
         status, reply = error.status_code, {"answer": error.detail}
-    await db().execute("update alerts set status=$2, tool=$3, arguments=$4, trace_id=$5, answer=$6 where id=$1", alert_id,
+    await db().execute("update alerts set status=$2, tool=$3, arguments=$4, trace_id=$5, answer=$6, approval_id=$7 where id=$1", alert_id,
                        reply.get("status", "error") if status == 200 else "error", reply.get("tool"), reply.get("arguments"),
-                       reply.get("trace_id"), (reply.get("answer") or str(reply.get("detail", "")))[:1000])
+                       reply.get("trace_id"), (reply.get("answer") or str(reply.get("detail", "")))[:1000],
+                       reply.get("approval_id") if status == 200 else None)
     if status == 200:
         await page(alert_id, node, title, reply)
 
@@ -334,23 +336,24 @@ async def incident(alert_id: str, actor=Depends(user)):
         # A trace is saved when its request ends, so started_at is really "finished at"; it began `seconds` earlier.
         # The agents it messaged ran inside that window.
         began = first["started_at"] - timedelta(seconds=first["seconds"] or 0)
+        # Only teammates the alert's agent itself messaged (caller), never other conversations in the same window.
         rows = [first, *await db().fetch(
-            "select * from traces where namespace=$1 and agent = any($2::text[]) and started_at between $3 and $4",
-            alert["namespace"], team, began, first["started_at"] + timedelta(seconds=5))]
+            "select * from traces where namespace=$1 and agent = any($2::text[]) and caller=$5 and started_at between $3 and $4",
+            alert["namespace"], team, began, first["started_at"] + timedelta(seconds=5), alert["agent"])]
         steps = sorted(({"agent": row["agent"], "trace_id": row["id"], "started_at": row["started_at"] - timedelta(seconds=row["seconds"] or 0),
                          "seconds": row["seconds"], "status": row["status"], "answer": row["answer"],
                          "tools": [{"name": step["name"], "rule": step.get("rule")} for step in row["steps"] or [] if step["type"] == "tool"]}
                         for row in rows), key=lambda step: step["started_at"])
         for row in await db().fetch("select id, agent, namespace, payload, mac, status, decided_by, decided_at from approvals "
-                                    "where namespace=$1 and agent=$2 and created_at >= $3 order by created_at",
-                                    alert["namespace"], alert["agent"], began):
+                                    "where id=$1", alert["approval_id"]):  # exactly the call the alert's run proposed
             request = verified_request(row)
             if request:  # unverifiable requests are never shown
                 approvals.append({"id": row["id"], "status": row["status"], "decided_by": row["decided_by"], "decided_at": row["decided_at"],
                                   "tool": request["tool"], "arguments": request["arguments"]})
-    answers = [step["answer"] for step in steps if step["agent"] != alert["agent"] and step["answer"]]
-    diffs = [match for answer in answers for match in DIFF.findall(answer)]
-    prevention = DIFF.sub("", answers[0]).strip() if answers else None  # the fixer's plan in words
+    # The plan and its diff come from the same teammate reply.
+    answer = next((step["answer"] for step in steps if step["agent"] != alert["agent"] and step["answer"]), "")
+    diffs = DIFF.findall(answer)
+    prevention = DIFF.sub("", answer).strip() or None  # the fixer's plan in words
     paged = await call_outcome(alert_id, alert["paged"])
     return dict(alert) | {"paged": paged, "steps": steps, "approvals": approvals, "prevention": prevention,
                           "prevention_diff": diffs[0] if diffs else None}
