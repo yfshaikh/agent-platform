@@ -1,4 +1,8 @@
-"""Built-in agent templates: a starting spec the user picks in the console, edits, then deploys."""
+"""Built-in agent templates: a starting spec the user picks in the console, edits, then deploys.
+
+How it fits: plain data. api/main.py serves it at GET /api/templates; the console's Create.tsx shows one card each;
+the e2e scripts deploy gpu-triage and gpu-fixer from here. Changing a template changes nothing already running.
+"""
 
 TEMPLATES = [
     {

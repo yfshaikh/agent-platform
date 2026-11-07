@@ -6,6 +6,10 @@ on the recipient, and a balance is the opening balance plus completed deposits m
 
 NESSIE_MOCK=1 serves the same tools from memory, in case Nessie is down during the demo.
 The API key travels in the URL, so URLs are never logged or put in error messages.
+
+How it fits:
+  Called by   agents' runtimes (MCP), only agents whose spec lists nessie. Registered in deploy/platform/tools.yaml.
+  Calls       Capital One's Nessie API (or its in-memory mock). Uses tools/common.py for the token and grant checks.
 """
 import datetime
 import os

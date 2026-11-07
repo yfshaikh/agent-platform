@@ -1,3 +1,5 @@
+// One incident (#/incidents/<alert id>): the proposed fix, what each agent did, and the fixer's prevention diff,
+// from /api/gpu-nodes/alerts/{id} (api/gpus.py).
 import { Fragment, ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
 

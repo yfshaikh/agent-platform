@@ -1,3 +1,5 @@
+// Crash-test display used by Create.tsx: polls /api/crash-tests/{id} (api/crash.py) and shows the score, each
+// attack's result and the live log.
 import { useEffect, useState } from "react";
 import { api } from "./api";
 

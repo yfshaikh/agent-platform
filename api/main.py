@@ -10,6 +10,12 @@ runs the approval inbox, and reads monitoring data from Postgres. It also:
   - relays the console's voice call to the voice server, with a session that can't deploy or approve
 
 Run in the cluster (deploy/platform/platform.yaml). Routes live under /api; the built console is served at /.
+
+How it fits:
+  Called by   the console (browser), the voice server (with a limited session), the e2e scripts in deploy/.
+  Calls       the Kubernetes API (creates/updates/deletes Agent objects; the operator reacts), agent pods'
+              /chat and /resume, Postgres. Mounts api/gpus.py and api/crash.py as extra routes; serves api/templates.py.
+  Read first among the api/ files: everything a person does goes through here.
 """
 import asyncio
 import base64

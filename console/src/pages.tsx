@@ -1,3 +1,5 @@
+// Four smaller pages: Approvals (the inbox; approving signs a grant), Traces, Audit log, People. All read rows
+// that api/main.py serves from Postgres.
 import { useContext, useEffect, useState } from "react";
 import { api, MeContext, Reply, Step, tellVoice, useCan } from "./api";
 import { Diff, Markdown } from "./Incident";

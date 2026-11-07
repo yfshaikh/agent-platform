@@ -1,3 +1,4 @@
+// The animated voice orb drawn on a canvas; used only by Voice.tsx.
 import { useEffect, useRef } from "react";
 
 export type Levels = { low: number; mid: number; high: number };

@@ -1,3 +1,4 @@
+// Shared by every page: the fetch wrapper (cookie session, errors) and the types the API returns.
 // Every call goes to the platform API (same origin; the session cookie logs us in).
 import { createContext, useContext } from "react";
 

@@ -9,6 +9,13 @@ For every Agent it reconciles (creates or updates until they match):
 All of them are "owned" by the Agent, so deleting the Agent deletes them (Kubernetes garbage collection).
 
 Run in the cluster (deploy/platform/platform.yaml) or locally: uv run kopf run agent_operator.py --standalone --all-namespaces
+
+How it fits:
+  Watches     Agent objects (schema: deploy/crds/agents.yaml) and Tool objects (deploy/platform/tools.yaml).
+  Reads       the platform-keys Secret and each tool's token Secret (only those, by name: see its Role in platform.yaml).
+  Writes      the five objects above for each agent, running the runtime image (runtime/agent.py), plus Events that
+              api/main.py turns into the console's live deploy log.
+  Never talks to the API, the database or the agents: everything goes through the Kubernetes API.
 """
 import base64
 import fnmatch

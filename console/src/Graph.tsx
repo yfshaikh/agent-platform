@@ -1,3 +1,5 @@
+// The Agents page: the live map (agents and the tools they may use, from /api/events and /api/tools) and the
+// drawer for one agent: chat, activity, overview, spec, stop and delete. Calls /api/agents/* in api/main.py.
 import { useContext, useEffect, useMemo, useState } from "react";
 import { Background, Controls, Edge, Handle, Node, NodeProps, Position, ReactFlow } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";

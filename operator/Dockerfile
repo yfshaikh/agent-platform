@@ -1,3 +1,4 @@
+# The operator's image (agent-operator:dev), deployed by deploy/platform/platform.yaml.
 FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:0.7.6 /uv /usr/local/bin/uv
 WORKDIR /app

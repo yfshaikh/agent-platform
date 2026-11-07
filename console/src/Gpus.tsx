@@ -1,3 +1,4 @@
+// The GPUs page: live readings and jobs per node, the incident buttons and recent alerts (api/gpus.py).
 import { useEffect, useState } from "react";
 import { api, useCan } from "./api";
 

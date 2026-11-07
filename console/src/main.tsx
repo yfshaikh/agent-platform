@@ -1,3 +1,6 @@
+// The console's entry point: sign-in gate, the side rail, hash routing (#/graph, #/gpus, ...), one live event
+// stream (/api/events) shared by every page, and the alarm banner. Each route renders a page from the files below.
+// Read first in console/: it shows every page and how they're reached.
 import { lazy, StrictMode, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Agent, api, ApiError, Me, MeContext } from "./api";

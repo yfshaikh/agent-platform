@@ -6,6 +6,10 @@ Browser mic ─► platform API (/api/voice relay) ─► this server: Cartesia 
 Only the platform API can reach this server (NetworkPolicy). It holds no platform credential: the API opens each call
 with a session token for the logged-in user that can only look, draft and chat. Deploying and approving take a click.
 Run: uvicorn bot:app --port 7860
+
+How it fits:
+  Called by   api/main.py's /api/voice WebSocket relay (the console's Voice.tsx opens it).
+  Calls       Cartesia and OpenRouter; its tools call back into the platform API with the caller's limited session.
 """
 from __future__ import annotations
 

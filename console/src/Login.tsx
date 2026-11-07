@@ -1,3 +1,4 @@
+// The sign-in form (POST /api/login) and the logo mark.
 import { useState } from "react";
 import { api } from "./api";
 

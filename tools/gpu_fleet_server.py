@@ -4,6 +4,10 @@ Agents can look (readings, jobs, logs) and start jobs from the node's fixed list
 cordoning the node are sensitive: each call needs a platform-signed human approval, checked here (common.guard).
 No function creates, resizes or deletes machines: people do that.
 Every function names the node it acts on; each agent's runtime refuses nodes the agent wasn't given (tools[].nodes).
+
+How it fits:
+  Called by   agents' runtimes (MCP), only agents whose spec lists gpu-fleet. Registered in deploy/platform/tools.yaml.
+  Calls       gpu-node/node_agent.py on each node (URL in NODES). api/gpus.py talks to the same node agents for people.
 """
 import json
 import os

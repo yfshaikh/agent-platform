@@ -3,6 +3,10 @@
 Every agent pod writes here, so pods stay stateless: any replica can resume an approval or
 continue a conversation. The platform API owns the schema (api/main.py creates the tables);
 agents connect as a limited role that can't create, drop or delete anything.
+
+How it fits:
+  Imported by runtime/agent.py. The tables are created by api/main.py, which also reads these same rows for the
+  console's Traces, Approvals, Activity and Audit pages.
 """
 import hashlib
 import hmac

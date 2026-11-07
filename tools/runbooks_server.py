@@ -2,6 +2,10 @@
 
 Runbooks are Markdown files in runbooks/ (baked into the image). An NMC² team adds its own by adding a file.
 ponytail: keyword search over a handful of files; a vector index when there are hundreds.
+
+How it fits:
+  Called by   agents' runtimes (MCP). Registered in deploy/platform/tools.yaml. The same Markdown files are copied into
+              the API image, which serves them to the console's Runbooks page (api/main.py /runbooks).
 """
 import pathlib
 import re

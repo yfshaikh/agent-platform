@@ -1,3 +1,4 @@
+// The Runbooks page: the same Markdown files the runbooks tool gives agents (served by api/main.py).
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { Markdown } from "./Incident";

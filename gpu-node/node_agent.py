@@ -5,6 +5,11 @@ command someone typed). It listens on 127.0.0.1 only: the platform reaches it th
 Agents never get a way to create or delete machines; a person makes the machine.
 
 Run on the GPU box:  NODE_TOKEN=... python3 node_agent.py      (standard library only)
+
+How it fits:
+  Runs on     the Brev GPU box (installed by deploy/gpu_node_setup.sh), not in the cluster.
+  Called by   tools/gpu_fleet_server.py (agents) and api/gpus.py (people and the alert watcher), through the tunnel.
+  Runs        the scripts in gpu-node/jobs/ as Docker containers.
 """
 import hmac
 import json

@@ -1,3 +1,5 @@
+// Build an agent: templates (api/templates.py), drafting from plain English, the editable YAML spec, the crash
+// test (Crash.tsx), and Deploy (POST /api/agents) with a live log of what the operator and Kubernetes did.
 import { useEffect, useState } from "react";
 import YAML from "yaml";
 import { api, ApiError, go, handoff, Spec, tellVoice, Tool, useCan } from "./api";

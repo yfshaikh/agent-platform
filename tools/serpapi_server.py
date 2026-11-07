@@ -2,6 +2,10 @@
 
 Results are trimmed to a few fields per item to keep model tokens (and cost) low.
 The API key travels in the URL, so URLs are never logged or put in error messages.
+
+How it fits:
+  Called by   agents' runtimes (MCP), only agents whose spec lists serpapi. Registered in deploy/platform/tools.yaml.
+  Calls       SerpApi. Read-only, so no grants needed.
 """
 import os
 

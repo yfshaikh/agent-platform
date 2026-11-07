@@ -1,3 +1,5 @@
+// The voice dock: a WebSocket to /api/voice (relayed to voice/bot.py), mic in, speech out, and cards the
+// assistant pushes onto the screen. Orb.tsx draws it.
 // The voice orb: talk to the platform. Adapted from ../frontend (App.tsx) and wired to the console.
 // The call goes to /api/voice on the platform API, which checks the session cookie and relays it to the voice server.
 // Voice can look, draft and chat; deploying and approving stay a click on the page the cards link to.

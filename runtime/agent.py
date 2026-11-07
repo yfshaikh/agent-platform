@@ -9,6 +9,12 @@ The loop, per request:
   3. repeat until the model answers, MAX_STEPS is hit, or a call needs a human's approval
 Policy lives here, in code, not in the prompt: a tricked model can ask for anything,
 but only allowed calls run, and "human" calls pause until someone approves them.
+
+How it fits:
+  Runs in     every agent pod (the operator's Deployment). Its env (TOOL_SERVERS, TALKS_TO, MODEL, ...) comes from the Agent.
+  Called by   the platform API (/chat for people, alerts and crash tests; /resume with a signed grant after an approval)
+              and by teammate agents (/chat, with the caller token).
+  Calls       the model (OpenRouter), its tool servers (tools/*_server.py, over MCP), teammates, and Postgres via store.py.
 """
 import base64
 import hmac

@@ -6,6 +6,10 @@ Only agents that list a tool get its token (the operator copies it into their Se
 The token alone isn't enough for sensitive functions (moving money): every such call must also carry a
 grant signed by the platform API for exactly that call, usable once. So an agent holding the token
 (or anyone who steals it) still can't skip the human approval.
+
+How it fits:
+  Imported by every tools/*_server.py. The grants it checks are signed by api/main.py (decide) when a person approves;
+  the public key comes from the APPROVAL_PUBLIC_KEY env var.
 """
 import base64
 import hashlib

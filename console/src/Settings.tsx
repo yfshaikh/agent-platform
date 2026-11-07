@@ -1,12 +1,14 @@
+// Admin settings: on-call phone calls (on/off, number, call timer) and each agent's daily token budget.
 import { useEffect, useState } from "react";
 import { Agent, api } from "./api";
 
-type Paging = { on: boolean; ready: boolean; every_seconds: number; last_call_at: string | null; next_call_in_seconds: number };
+type Paging = { on: boolean; ready: boolean; every_seconds: number; last_call_at: string | null; next_call_in_seconds: number; phone_ending: string | null };
 
 // Admin settings: on-call phone calls (on/off, reset the wait between calls) and agents' daily token budgets.
 export function Settings({ agents }: { agents: Agent[] }) {
   const [paging, setPaging] = useState<Paging | null>(null);
   const [message, setMessage] = useState("");
+  const [phone, setPhone] = useState("");
 
   useEffect(() => {
     const load = () => api<Paging>("/gpu-nodes/paging").then(setPaging, (error) => setMessage((error as Error).message));
@@ -59,6 +61,20 @@ export function Settings({ agents }: { agents: Agent[] }) {
               Reset call timer
             </button>
           </div>
+        )}
+        {paging && (
+          <form className="settings-row" onSubmit={(event) => {
+            event.preventDefault();
+            const number = phone.replace(/[\s()-]/g, "");
+            if (!/^\+[1-9][0-9]{7,14}$/.test(number)) return setMessage("Enter the full number with its country code, like +15125551234.");
+            act("/gpu-nodes/paging/phone", "PUT", { phone: number }, "On-call number saved.").then(() => setPhone(""));
+          }}>
+            <span className="small muted">{paging.phone_ending ? `Calls the number ending ${paging.phone_ending}.` : "No on-call number yet."}</span>
+            <span className="spacer" />
+            <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="+15125551234"
+              aria-label="New on-call number" autoComplete="off" style={{ width: "12rem" }} />
+            <button className="secondary" disabled={!phone.trim()}>Change number</button>
+          </form>
         )}
       </section>
 

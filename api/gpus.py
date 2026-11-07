@@ -6,6 +6,11 @@ incident or stopping a job here is a person's action, so it needs the right role
 Alerts: every 10 s the API reads each node. A job that crashed, or a GPU that stays hot, becomes one alert, sent as a chat
 message to the agent subscribed to that node (spec.alerts: true). The agent investigates like it would for a person, so
 any fix it proposes still waits for a human approval.
+
+How it fits:
+  Mounted by  api/main.py (routes under /api/gpu-nodes). Read by the console's Gpus.tsx, Incident.tsx, Settings.tsx.
+  Calls       each GPU node agent (gpu-node/node_agent.py) directly, at the URL in NODES; the subscribed agent's /chat
+              (via main.call_agent) when an alert fires; Cartesia to phone the on-call engineer.
 """
 import asyncio
 import json
@@ -16,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from main import GROUP, PLATFORM_NAMESPACE, VERSION, agents_with_usage, audit, call_agent, can, db, k8s, kube, user, verified_request
 
@@ -190,6 +195,11 @@ async def wake(alert_id, node, title):
         await page(alert_id, node, title, reply)
 
 
+async def oncall_phone():
+    """The on-call number: the one set in Settings, else the one from .env (oncall-pager secret). Never logged or shown."""
+    return await db().fetchval("select value #>> '{}' from settings where key='oncall_phone'") or os.environ.get("ONCALL_PHONE")
+
+
 async def paging_on():
     """Whether alerts phone the on-call engineer (an admin switch on the GPUs page; off until someone turns it on)."""
     return bool(await db().fetchval("select value from settings where key='paging'"))
@@ -230,7 +240,7 @@ async def claim_page_slot(alert_id):
 async def page(alert_id, node, title, reply):
     """Phone the on-call engineer through Cartesia with what triage found. The phone agent only explains: it has no way
     into the platform, so nothing said on a call can approve or change anything. The number is never logged or shown."""
-    phone = os.environ.get("ONCALL_PHONE")
+    phone = await oncall_phone()
     if not await paging_on():
         result = "not called: paging is off"
     elif not (phone and os.environ.get("CARTESIA_API_KEY") and os.environ.get("CARTESIA_PAGER_AGENT_ID") and os.environ.get("CARTESIA_FROM_NUMBER_ID")):
@@ -288,14 +298,20 @@ class Paging(BaseModel):
     on: bool
 
 
+class OncallPhone(BaseModel):
+    """Body of PUT /gpu-nodes/paging/phone: an E.164 number like +15125551234."""
+    phone: str = Field(pattern=r"^\+[1-9][0-9]{7,14}$")
+
+
 @router.get("/paging")
 async def get_paging(actor=Depends(user)):
     """Whether alerts phone the on-call engineer, and whether paging is set up at all."""
-    ready = all(os.environ.get(key) for key in ("ONCALL_PHONE", "CARTESIA_API_KEY", "CARTESIA_PAGER_AGENT_ID", "CARTESIA_FROM_NUMBER_ID"))
+    phone = await oncall_phone()
+    ready = bool(phone) and all(os.environ.get(key) for key in ("CARTESIA_API_KEY", "CARTESIA_PAGER_AGENT_ID", "CARTESIA_FROM_NUMBER_ID"))
     last = await db().fetchval("select max(paged_at) from alerts")
     wait = await db().fetchval("select greatest(0, extract(epoch from (max(paged_at) + make_interval(secs => $1) - now())))::int "
                                f"from alerts where paged_at > {wait_starts('$1')}", PAGE_EVERY_SECONDS)
-    return {"on": await paging_on(), "ready": ready, "every_seconds": PAGE_EVERY_SECONDS, "last_call_at": last, "next_call_in_seconds": wait or 0}
+    return {"on": await paging_on(), "ready": ready, "every_seconds": PAGE_EVERY_SECONDS, "last_call_at": last, "next_call_in_seconds": wait or 0, "phone_ending": phone[-4:] if phone else None}
 
 
 @router.put("/paging")
@@ -303,6 +319,15 @@ async def set_paging(body: Paging, actor=Depends(can("admin"))):
     """Turn phoning the on-call engineer on or off. Audited."""
     await db().execute("insert into settings values ('paging', $1) on conflict (key) do update set value=excluded.value", body.on)
     await audit(actor, "paging_on" if body.on else "paging_off", "on-call", {})
+    return await get_paging(actor)
+
+
+@router.put("/paging/phone")
+async def set_oncall_phone(body: OncallPhone, actor=Depends(can("admin"))):
+    """Change who gets phoned. Audited without the number (only its last 4 digits are ever shown)."""
+    await db().execute("insert into settings values ('oncall_phone', to_jsonb($1::text)) "
+                       "on conflict (key) do update set value=excluded.value", body.phone)
+    await audit(actor, "oncall_number_changed", "on-call", {"ending": body.phone[-4:]})
     return await get_paging(actor)
 
 
