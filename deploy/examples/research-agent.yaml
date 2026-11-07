@@ -1,5 +1,6 @@
 # A read-only research agent: live web search and shopping prices, nothing that changes anything.
-apiVersion: v1
+# Two objects: the team's namespace, then the Agent (schema: deploy/crds/agents.yaml).
+apiVersion: v1          # Namespace is a "core" type: no group, just v1
 kind: Namespace
 metadata:
   name: team-demo
@@ -14,7 +15,7 @@ spec:
     You are a shopping and research assistant. Use your search tools for anything current
     (prices, places, news) and cite the store or source. Keep answers short.
   tools:
-    - name: serpapi
+    - name: serpapi       # no allow list: every serpapi function (all of them are read-only)
   replicas: 1
   budget: {tokensPerDay: 200000, maxStepsPerRequest: 8}
   template: research-assistant

@@ -1,62 +1,83 @@
 # Everything the platform itself runs: its namespace, Postgres, the operator, and the tool servers.
 # Secrets (API keys, tool tokens, database password) are created by deploy/sync_secrets.py, never stored here.
-apiVersion: v1
-kind: Namespace
+#
+# How to read this file: it's many Kubernetes objects separated by "---". Each has apiVersion + kind (what type it
+# is), metadata (its name and namespace) and spec (what you want). The same few patterns repeat:
+#   Deployment       "keep N copies of this pod running"; restarts them, rolls out changes
+#   Service          one stable DNS name in front of a Deployment's pods: <name>.<namespace>.svc
+#   ServiceAccount   an identity for a pod; RBAC (Role/ClusterRole + a binding) says what it may do in the cluster
+#   NetworkPolicy    a firewall around pods: who may connect to them
+# Pods find each other by LABELS, not names: a Deployment's selector, a Service's selector and a NetworkPolicy's
+# podSelector all pick pods by labels like app: postgres. The comments explain each field the first time it appears.
+apiVersion: v1      # core types (Namespace, Service, Secret, ServiceAccount) have no group, just v1
+kind: Namespace     # a folder for objects; the platform's own pieces live in "platform", agents in team namespaces
 metadata:
   name: platform
 ---
 # Postgres: traces, approvals, audit log, budgets, conversations.
 # ponytail: emptyDir, so data is lost if the pod is deleted; use a PersistentVolumeClaim (or Tiger Data) for anything real.
-apiVersion: apps/v1
+apiVersion: apps/v1          # Deployments are in the "apps" group
 kind: Deployment
 metadata: {name: postgres, namespace: platform}
 spec:
-  replicas: 1
-  selector: {matchLabels: {app: postgres}}
-  template:
+  replicas: 1                                 # how many pods to keep running
+  selector: {matchLabels: {app: postgres}}    # which pods count as this Deployment's: those labeled app: postgres
+  template:                                   # the pod to stamp out (its labels must match the selector)
     metadata: {labels: {app: postgres}}
     spec:
       containers:
         - name: postgres
-          image: postgres:17-alpine
-          env:
+          image: postgres:17-alpine           # pulled from Docker Hub
+          env:                                # environment variables inside the container
             - {name: POSTGRES_DB, value: platform}
             - name: POSTGRES_PASSWORD
+              # read the value from a Secret (here: Secret "postgres", key POSTGRES_PASSWORD), so it's not in this file
               valueFrom: {secretKeyRef: {name: postgres, key: POSTGRES_PASSWORD}}
-          ports: [{containerPort: 5432}]
+          ports: [{containerPort: 5432}]      # documents the port it listens on
+          # Readiness: "may this pod get traffic yet?" Kubernetes runs pg_isready every 5 s; until it succeeds, the
+          # Service sends nothing here. (Failing readiness never restarts the pod; a livenessProbe would.)
           readinessProbe: {exec: {command: [pg_isready, -U, postgres]}, periodSeconds: 5}
-          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}
-          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
-      volumes: [{name: data, emptyDir: {}}]
+          # requests: reserved for scheduling. limits: the ceiling (over the memory limit the container is killed).
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 512Mi}}   # 50m = 5% of one CPU core
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]   # where the volume below appears
+      volumes: [{name: data, emptyDir: {}}]   # emptyDir: scratch space that lives and dies with the pod
 ---
+# A Service gives the pods above a stable address: postgres.platform.svc:5432 (pods get new IPs when replaced).
 apiVersion: v1
 kind: Service
 metadata: {name: postgres, namespace: platform}
 spec:
-  selector: {app: postgres}
-  ports: [{port: 5432}]
+  selector: {app: postgres}   # send traffic to ready pods with this label
+  ports: [{port: 5432}]       # the Service's port (targetPort, the pod's port, defaults to the same)
 ---
 # The operator: watches Agent and Tool objects and creates each agent's pods, identity and network rules.
+# A ServiceAccount is the identity a pod runs as. Its token is mounted into the pod, and the operator's Kubernetes
+# client uses it (load_incluster_config). By itself it can do nothing; the ClusterRole + binding below grant permissions.
 apiVersion: v1
 kind: ServiceAccount
 metadata: {name: agent-operator, namespace: platform}
 ---
+# RBAC: a ClusterRole is a list of permissions valid in EVERY namespace (a Role is one namespace only). Each rule =
+# apiGroups ("" is the core group) + resources + verbs. There are no deny rules: anything not listed is refused.
+# Check what it allows with:  kubectl auth can-i --list --as=system:serviceaccount:platform:agent-operator
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: agent-operator}
 rules:
+  # Watch Agents and Tools; patch is for kopf's bookkeeping annotations and agents/status for phase and readiness.
   - apiGroups: [platform.hacktx.dev]
     resources: [agents, agents/status, tools]
     verbs: [get, list, watch, patch, update]
   - apiGroups: [""]
     resources: [namespaces]
-    verbs: [get, list, watch]
+    verbs: [get, list, watch]   # to skip namespaces that are being deleted
   # Secrets: write-only here (each agent's keys Secret, each namespace's caller token). It can't read or list them;
   # the only Secrets it reads are named in the platform-namespace Role below.
   # ponytail: writes are still cluster-wide; an admission policy limiting them to agent namespaces would close that
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create, patch]
+  # The objects it builds for each agent (server-side apply needs create + patch).
   - apiGroups: [""]
     resources: [serviceaccounts, services, resourcequotas]
     verbs: [get, list, watch, create, patch, update, delete]
@@ -68,11 +89,12 @@ rules:
     verbs: [get, list, watch, create, patch, update, delete]
   - apiGroups: ["", events.k8s.io]
     resources: [events]
-    verbs: [create]
+    verbs: [create]   # kopf.info(): the steps the console's deploy log shows
   - apiGroups: [apiextensions.k8s.io]
     resources: [customresourcedefinitions]
-    verbs: [get, list, watch]
+    verbs: [get, list, watch]   # kopf looks up the CRDs it watches at startup
 ---
+# The binding is what gives the ClusterRole to the operator's ServiceAccount (roleRef = which role, subjects = who).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata: {name: agent-operator}
@@ -86,6 +108,7 @@ metadata: {name: agent-operator-read-keys, namespace: platform}
 rules:
   - apiGroups: [""]
     resources: [secrets]
+    # resourceNames narrows the rule to these exact objects; without it, "get secrets" would mean every Secret.
     resourceNames: [platform-keys, tool-nessie-token, tool-serpapi-token, tool-gpu-fleet-token, tool-runbooks-token]
     verbs: [get]
 ---
@@ -104,12 +127,12 @@ spec:
   template:
     metadata: {labels: {app: agent-operator}}
     spec:
-      serviceAccountName: agent-operator
+      serviceAccountName: agent-operator   # run as the identity above, so it gets those permissions
       containers:
         - name: operator
-          image: agent-operator:dev
-          imagePullPolicy: Never
-          env: [{name: RUNTIME_IMAGE, value: "agent-runtime:dev"}]
+          image: agent-operator:dev        # built locally and copied into kind (`kind load docker-image`)
+          imagePullPolicy: Never           # never try a registry: the image only exists inside the kind node
+          env: [{name: RUNTIME_IMAGE, value: "agent-runtime:dev"}]   # the image it puts in every agent's Deployment
           resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 256Mi}}
 ---
 # Tool servers (MCP). Each checks a bearer token; only agents that list the tool get that token and network access.
@@ -126,18 +149,19 @@ spec:
         - name: tool
           image: platform-tools:dev
           imagePullPolicy: Never
-          args: [nessie_server.py]
+          args: [nessie_server.py]   # one image for all tool servers; args picks which server this container runs
           env:
             - name: TOOL_TOKEN
               valueFrom: {secretKeyRef: {name: tool-nessie-token, key: TOOL_TOKEN}}
             - name: APPROVAL_PUBLIC_KEY
               valueFrom: {secretKeyRef: {name: platform-keys, key: APPROVAL_PUBLIC_KEY}}
             - name: NESSIE_API_KEY
-              valueFrom: {secretKeyRef: {name: platform-keys, key: NESSIE_API_KEY, optional: true}}
+              valueFrom: {secretKeyRef: {name: platform-keys, key: NESSIE_API_KEY, optional: true}}  # optional: start even if missing
             - {name: NESSIE_MOCK, value: "0"}
           ports: [{containerPort: 8000}]
           resources: {requests: {cpu: 20m, memory: 96Mi}, limits: {memory: 256Mi}}
 ---
+# tool-nessie.platform.svc:8000: the URL in its Tool object (deploy/platform/tools.yaml).
 apiVersion: v1
 kind: Service
 metadata: {name: tool-nessie, namespace: platform}
@@ -199,6 +223,7 @@ spec:
               valueFrom: {secretKeyRef: {name: platform-keys, key: APPROVAL_PUBLIC_KEY}}
             - name: NODE_TOKEN
               valueFrom: {secretKeyRef: {name: gpu-node-token, key: NODE_TOKEN}}
+            # host.docker.internal = the Mac running kind (Docker Desktop's name for it), where the SSH tunnel listens.
             - {name: NODES, value: '{"nmc-gpu": "http://host.docker.internal:9400"}'}  # connected nodes only
           ports: [{containerPort: 8000}]
           resources: {requests: {cpu: 20m, memory: 96Mi}, limits: {memory: 256Mi}}
@@ -239,17 +264,21 @@ spec:
   ports: [{port: 8000}]
 ---
 # Who may reach Postgres: the platform API (owner) and agent pods (limited role). Nothing else, even inside the cluster.
+# A NetworkPolicy is a firewall: podSelector picks the pods it protects; once a pod is selected for Ingress, every
+# incoming connection not allowed by a rule is dropped. The cluster's network plugin enforces it.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: postgres-ingress, namespace: platform}
 spec:
-  podSelector: {matchLabels: {app: postgres}}
-  policyTypes: [Ingress]
+  podSelector: {matchLabels: {app: postgres}}   # protects the Postgres pod
+  policyTypes: [Ingress]                        # incoming traffic only (outgoing is left open)
   ingress:
-    - from:
-        - podSelector: {matchLabels: {app: platform-api}}
+    - from:   # each list item is an alternative ("or")
+        - podSelector: {matchLabels: {app: platform-api}}   # the API's pod, in this same namespace
+        # namespaceSelector + podSelector in ONE item means "pods with this label in any namespace" ({} = all
+        # namespaces): every agent pod, wherever its team is. (Two separate items would mean something else.)
         - namespaceSelector: {}
-          podSelector: {matchExpressions: [{key: platform.hacktx.dev/agent, operator: Exists}]}
+          podSelector: {matchExpressions: [{key: platform.hacktx.dev/agent, operator: Exists}]}  # Exists: has the label, any value
       ports: [{port: 5432}]
 ---
 # Who may reach tool servers: agent pods only (each agent's own egress rules narrow it to the tools it lists).
@@ -270,6 +299,8 @@ apiVersion: v1
 kind: ServiceAccount
 metadata: {name: platform-api, namespace: platform}
 ---
+# The API's permissions: create Agents (never Deployments: building is the operator's job), read pods and events for
+# the console, manage namespaces (team namespaces and crash-test sandboxes).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata: {name: platform-api}
@@ -314,6 +345,7 @@ spec:
         - name: api
           image: platform-api:dev
           imagePullPolicy: Never
+          # envFrom: every key of these Secrets becomes an env var (env: below sets single ones).
           envFrom: [{secretRef: {name: platform-api}}, {secretRef: {name: oncall-pager, optional: true}}]  # pager: see README
           env:
             - {name: DRAFT_MODEL, value: "anthropic/claude-haiku-5.5"}
@@ -321,16 +353,19 @@ spec:
             - name: NODE_TOKEN
               valueFrom: {secretKeyRef: {name: gpu-node-token, key: NODE_TOKEN}}
           ports: [{containerPort: 8000}]
-          readinessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 5}
+          readinessProbe: {httpGet: {path: /healthz, port: 8000}, periodSeconds: 5}   # HTTP GET must return 2xx/3xx
           resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 384Mi}}
+          # Hardening: run as a non-root user, can't gain privileges, no Linux capabilities. A compromised process gets less.
           securityContext: {allowPrivilegeEscalation: false, runAsNonRoot: true, runAsUser: 10001, capabilities: {drop: [ALL]}}
 ---
+# platform-api.platform.svc (port 80) forwards to the pod's port 8000. Your Mac reaches it with
+#   kubectl -n platform port-forward svc/platform-api 8080:80
 apiVersion: v1
 kind: Service
 metadata: {name: platform-api, namespace: platform}
 spec:
   selector: {app: platform-api}
-  ports: [{port: 80, targetPort: 8000}]
+  ports: [{port: 80, targetPort: 8000}]   # port: what callers use; targetPort: where the container listens
 ---
 # The voice server. Only the platform API can reach it (it relays the console's call); it holds no platform credential.
 apiVersion: apps/v1

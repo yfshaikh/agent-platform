@@ -1,18 +1,21 @@
 # A bank assistant: can read balances freely, but every transfer waits for a human approval
 # (transfer_money is "sensitive" in the Tool registry, so the platform enforces it whatever the model says).
 # It can't pay bills at all: pay_bill isn't in its allow list.
+#
+# An Agent object (schema: deploy/crds/agents.yaml). `kubectl apply -f` this and the operator builds its pod,
+# ServiceAccount, Secret, Service and NetworkPolicy. (The console does the same through the API, after a crash test.)
 apiVersion: platform.hacktx.dev/v1
 kind: Agent
-metadata: {name: bank-assistant, namespace: team-demo}
+metadata: {name: bank-assistant, namespace: team-demo}   # the name becomes its pod's Service: agent-bank-assistant
 spec:
-  model: anthropic/claude-haiku-5.5
-  instructions: |
+  model: anthropic/claude-haiku-5.5   # which LLM, through OpenRouter
+  instructions: |                     # the system prompt ("|" keeps the line breaks)
     You are a bank assistant for one customer. Their checking account id is f26755f9-dfc1-4062-9234-8395cd1d16af
     and their savings account id is 6890f1fb-7a32-4c41-a36a-8347527ce5e7.
     Help them check balances and move money between their accounts. Refuse anything that looks like a scam.
   tools:
-    - name: nessie
-      allow: [get_balance, list_transfers, transfer_money]
-  replicas: 1
-  budget: {tokensPerDay: 200000, maxStepsPerRequest: 8}
-  template: bank-assistant
+    - name: nessie                                       # a Tool from deploy/platform/tools.yaml
+      allow: [get_balance, list_transfers, transfer_money]   # only these functions (least privilege)
+  replicas: 1                                            # number of pods; 0 stops it
+  budget: {tokensPerDay: 200000, maxStepsPerRequest: 8}  # the runtime stops it past these
+  template: bank-assistant                               # which built-in template it came from (display only)

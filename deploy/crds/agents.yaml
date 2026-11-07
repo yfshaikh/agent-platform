@@ -1,41 +1,62 @@
 # The Agent kind: what a user writes to get an agent. The operator turns it into real objects.
-apiVersion: apiextensions.k8s.io/v1
+#
+# A CustomResourceDefinition (CRD) teaches the Kubernetes API server a new type of object. After this is applied, the
+# API server stores Agents, validates them against the schema below, and serves `kubectl get agents`, watches and RBAC
+# for them, exactly like built-in types. It does NOT make anything happen: the operator (operator/agent_operator.py)
+# watches Agents and builds the pods. The API (api/main.py) creates Agents for people.
+apiVersion: apiextensions.k8s.io/v1   # CRDs are themselves objects, of the built-in type CustomResourceDefinition
 kind: CustomResourceDefinition
 metadata:
-  name: agents.platform.hacktx.dev
+  name: agents.platform.hacktx.dev    # must be exactly <plural>.<group>
 spec:
-  group: platform.hacktx.dev
-  scope: Namespaced
+  group: platform.hacktx.dev          # the API group: Agents live at /apis/platform.hacktx.dev/v1/... (like apps/v1 for Deployments)
+  scope: Namespaced                   # each Agent lives in a namespace (a team's), not cluster-wide
+  # What to call it: `kind` in YAML files, `plural` in URLs and `kubectl get agents`, `shortNames` for `kubectl get ag`.
   names: {kind: Agent, plural: agents, singular: agent, shortNames: [ag]}
   versions:
     - name: v1
-      served: true
-      storage: true
+      served: true    # the API server answers requests for this version
+      storage: true   # and stores objects in this version (exactly one version is the storage version)
+      # Turns on the status subresource: .status gets its own endpoint (.../agents/<name>/status). Normal edits can't
+      # change status (so a user can't fake "Running"), and the operator's status writes don't count as spec changes
+      # (they don't bump metadata.generation, so they don't re-trigger the operator's update handler).
       subresources: {status: {}}
+      # The columns `kubectl get agents` prints, each read from the object with a JSONPath. Pointing them at status
+      # fields (written by the operator's report_status timer) turns the CLI into a live dashboard:
+      #   NAME        MODEL                      REPLICAS  READY  PHASE    AGE
+      #   gpu-triage  anthropic/claude-haiku-5.5  1         1      Running  2h
       additionalPrinterColumns:
         - {name: Model, type: string, jsonPath: .spec.model}
         - {name: Replicas, type: integer, jsonPath: .spec.replicas}
         - {name: Ready, type: integer, jsonPath: .status.readyReplicas}
         - {name: Phase, type: string, jsonPath: .status.phase}
         - {name: Age, type: date, jsonPath: .metadata.creationTimestamp}
+      # The schema (OpenAPI v3): which fields exist, their types, which are required, ranges and defaults. The API
+      # server enforces it BEFORE storing anything, so the operator never sees an Agent with no instructions or 9
+      # replicas. Fields not listed here are rejected by kubectl (strict) or silently dropped ("pruned").
       schema:
         openAPIV3Schema:
           type: object
           properties:
+            # spec: what the user wants. Written by people (through the API or kubectl).
             spec:
               type: object
-              required: [model, instructions]
+              required: [model, instructions]   # an Agent without these is refused
               properties:
-                model: {type: string, minLength: 1}
-                instructions: {type: string, minLength: 1}
+                model: {type: string, minLength: 1}          # the OpenRouter model id, e.g. anthropic/claude-haiku-5.5
+                instructions: {type: string, minLength: 1}   # the system prompt
+                # The tools this agent may use. Each entry names a Tool object (deploy/platform/tools.yaml).
                 tools:
                   type: array
                   items:
                     type: object
                     required: [name]
                     properties:
-                      name: {type: string}
-                      allow: {type: array, items: {type: string}}
+                      name: {type: string}                          # which Tool
+                      allow: {type: array, items: {type: string}}   # which of its functions (least privilege); empty = all
+                      # Per-function approval rules that override the tool's class: auto (just run), human (pause for
+                      # an approval), deny (never). The operator only accepts rules STRICTER than the class's default.
+                      # additionalProperties: a map with any keys (function names) whose values must match this.
                       approval:
                         type: object
                         additionalProperties: {type: string, enum: [auto, human, deny]}
@@ -45,17 +66,25 @@ spec:
                         additionalProperties: {type: number, minimum: 0}
                       # e.g. [nmc-gpu]: the only nodes this agent may act on (calls naming another node are refused)
                       nodes: {type: array, items: {type: string}}
+                # Teammates this agent may message (exact names or globs like "resident-*"). The operator turns this
+                # into the TALKS_TO env var AND into NetworkPolicy rules on both agents.
                 talksTo: {type: array, items: {type: string}}
+                # How many pods. 0 is the console's Stop button (the kill switch). Defaults to 1 if left out.
                 replicas: {type: integer, minimum: 0, maximum: 5, default: 1}
+                # Spending limits the runtime enforces. `default: {}` makes the object exist even when left out, so
+                # the nested defaults below always get filled in.
                 budget:
                   type: object
                   default: {}
                   properties:
                     tokensPerDay: {type: integer, minimum: 1, default: 2000000}
                     maxStepsPerRequest: {type: integer, minimum: 1, maximum: 50, default: 12}
-                template: {type: string}
+                template: {type: string}   # which built-in template it came from (api/templates.py), for display
                 # true: GPU alerts on this agent's nodes (a crashed job, a hot GPU) are sent to it as a chat message
                 alerts: {type: boolean}
+            # status: what's actually happening. Written only by the operator (phase, readyReplicas, message) and the
+            # API (crashTest), through the status subresource. preserve-unknown-fields: accept any fields here
+            # instead of pruning them, since status is ours and evolves freely.
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

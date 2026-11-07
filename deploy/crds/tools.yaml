@@ -1,16 +1,23 @@
 # The Tool kind: one MCP server in the registry, with a permission class for each of its functions.
+#
+# A second custom type (see deploy/crds/agents.yaml for what a CRD is). Tool objects live in the platform namespace
+# (deploy/platform/tools.yaml) and form the registry: Agents name tools from it, the operator reads it to wire each agent
+# to its tools (URL, token, network access), and the runtime reads each function's class to decide auto vs human.
+# Adding a tool to the platform = applying a Tool object; no code changes.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: tools.platform.hacktx.dev
+  name: tools.platform.hacktx.dev     # <plural>.<group>
 spec:
-  group: platform.hacktx.dev
-  scope: Namespaced
+  group: platform.hacktx.dev          # same API group as Agent
+  scope: Namespaced                   # lives in a namespace (platform)
   names: {kind: Tool, plural: tools, singular: tool}
   versions:
     - name: v1
       served: true
       storage: true
+      # No status subresource: a Tool is pure configuration, nothing reports state on it.
+      # Columns for `kubectl -n platform get tools` (each a JSONPath into the object).
       additionalPrinterColumns:
         - {name: URL, type: string, jsonPath: .spec.url}
         - {name: Description, type: string, jsonPath: .spec.description}
@@ -22,9 +29,11 @@ spec:
               type: object
               required: [url, secretRef, classes]
               properties:
-                url: {type: string}
-                secretRef: {type: string}
-                description: {type: string}
+                url: {type: string}           # where the MCP server listens, e.g. http://tool-nessie.platform.svc:8000/mcp
+                secretRef: {type: string}     # the Secret holding this tool's bearer token (copied only to agents that use it)
+                description: {type: string}   # shown in the console and given to the drafting model
+                # Every function and its permission class: read (runs), write (runs), sensitive (pauses for a human,
+                # and the tool server itself demands a signed grant). additionalProperties = a map: function name -> class.
                 classes:
                   type: object
                   additionalProperties: {type: string, enum: [read, write, sensitive]}
@@ -35,7 +44,7 @@ spec:
                     type: object
                     required: [name]
                     properties:
-                      name: {type: string}
-                      gpu: {type: string}
-                      provider: {type: string}
-                      connected: {type: boolean}
+                      name: {type: string}         # e.g. nmc-gpu
+                      gpu: {type: string}          # e.g. Tesla T4, 16 GB (display only)
+                      provider: {type: string}     # e.g. Brev (GCP) (display only)
+                      connected: {type: boolean}   # false: listed but not reachable yet; the operator refuses agents that pick it

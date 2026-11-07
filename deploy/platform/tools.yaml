@@ -1,11 +1,17 @@
 # The tool registry: every MCP server agents may use, and the permission class of each function.
 # read: runs automatically · write: runs automatically (agents may make it stricter) · sensitive: a human approves every call
-apiVersion: platform.hacktx.dev/v1
+#
+# These are instances of the Tool custom type (its schema: deploy/crds/tools.yaml), one per tool server. The servers
+# themselves (Deployments + Services) are in deploy/platform/platform.yaml; this file only DESCRIBES them. Agents refer
+# to a tool by metadata.name ("nessie"); the operator reads these to give each agent its tools' URLs, tokens and
+# network access. Several objects in one file are separated by "---".
+apiVersion: platform.hacktx.dev/v1   # <group>/<version> from the CRD
 kind: Tool
 metadata: {name: nessie, namespace: platform}
 spec:
+  # <service>.<namespace>.svc:<port> is the in-cluster DNS name of the tool server's Service; /mcp is its MCP endpoint.
   url: http://tool-nessie.platform.svc:8000/mcp
-  secretRef: tool-nessie-token
+  secretRef: tool-nessie-token   # Secret (in platform) with this server's bearer token; created by deploy/sync_secrets.py
   description: Capital One Nessie sandbox bank
   classes:
     get_customer_accounts: read
@@ -33,6 +39,7 @@ spec:
   url: http://tool-gpu-fleet.platform.svc:8000/mcp
   secretRef: tool-gpu-fleet-token
   description: Real GPU readings and jobs on NMC²'s GPU nodes
+  # The machines this tool reaches. An Agent picks some in tools[].nodes; its runtime refuses calls naming any other.
   nodes:
     - {name: nmc-gpu, gpu: "Tesla T4, 16 GB", provider: "Brev (GCP)", connected: true}
     - {name: nmc-gpu-2, gpu: "NVIDIA L4, 24 GB", provider: "Brev (GCP)", connected: false}  # shows where a second machine goes

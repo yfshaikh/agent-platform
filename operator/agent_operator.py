@@ -157,8 +157,10 @@ def build_objects(agent, tools, siblings_by_name):
     """Everything one Agent becomes, as manifests. Pure function of its inputs (easy to read and test)."""
     name, namespace, spec = agent["metadata"]["name"], agent["metadata"]["namespace"], agent["spec"]
     resource_name = f"agent-{name}"
+    # Labels are how everything finds this agent's pods: the Deployment's selector, the Service's selector and
+    # NetworkPolicies (its own, its teammates', Postgres's and the tools') all match platform.hacktx.dev/agent.
     labels = {"platform.hacktx.dev/agent": name, "app.kubernetes.io/managed-by": FIELD_MANAGER}
-    owner = owner_reference(agent)
+    owner = owner_reference(agent)  # on every object: deleting the Agent deletes them all (garbage collection)
     platform_keys = read_secret(PLATFORM_NAMESPACE, "platform-keys")
 
     secret_data = {key: platform_keys[key] for key in ("OPENROUTER_API_KEY", "DATABASE_URL", "APPROVAL_PUBLIC_KEY")
@@ -190,6 +192,10 @@ def build_objects(agent, tools, siblings_by_name):
     # Changing config or keys changes this hash, which rolls the pods so they pick up the new values.
     config_hash = hashlib.sha256(json.dumps([environment, secret_data], sort_keys=True).encode()).hexdigest()[:16]
 
+    # The NetworkPolicy's rules (the "to"/"from" entries are alternatives; a namespaceSelector and a podSelector in the
+    # SAME entry mean "pods with that label in that namespace"):
+    #   egress (out):  DNS; HTTPS to the internet except private ranges (the model API); Postgres; its tools; its teammates
+    #   ingress (in):  the platform API; the teammates that list this agent in their talksTo
     def agent_pods(names):
         """Pod selector for a list of agents in this namespace."""
         return {"podSelector": {"matchExpressions": [{"key": "platform.hacktx.dev/agent", "operator": "In", "values": names}]}}
@@ -217,22 +223,28 @@ def build_objects(agent, tools, siblings_by_name):
 
     metadata = {"name": resource_name, "namespace": namespace, "labels": labels, "ownerReferences": owner}
     return [
+        # Its identity: no RBAC role at all, and no token mounted into the pod (nothing to steal).
         {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": metadata, "automountServiceAccountToken": False},
+        # Its keys: only what this agent needs (the model key, its own tools' tokens). data values are base64.
         {"apiVersion": "v1", "kind": "Secret", "metadata": {**metadata, "name": f"{resource_name}-keys"}, "data": secret_data},
         {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": metadata, "spec": {
-            "replicas": spec.get("replicas", 1),
-            "selector": {"matchLabels": {"platform.hacktx.dev/agent": name}},
+            "replicas": spec.get("replicas", 1),  # 0 = stopped (the console's Stop button)
+            "selector": {"matchLabels": {"platform.hacktx.dev/agent": name}},  # which pods are this Deployment's
             "template": {
+                # The config hash as an annotation: a changed key changes the pod template, so Kubernetes rolls the pods.
                 "metadata": {"labels": labels, "annotations": {"platform.hacktx.dev/config-hash": config_hash}},
                 "spec": {
                     "serviceAccountName": resource_name, "automountServiceAccountToken": False,
                     "containers": [{
                         "name": "runtime", "image": RUNTIME_IMAGE, "imagePullPolicy": "IfNotPresent",
                         "ports": [{"containerPort": 8000}],
+                        # env decides WHICH agent this shared image becomes; envFrom loads every key of its Secret.
                         "env": [{"name": key, "value": value} for key, value in environment.items()] + [
                             {"name": "AGENT_CALLER_TOKEN", "valueFrom": {"secretKeyRef": {"name": "agent-caller-token", "key": "AGENT_CALLER_TOKEN"}}}],
                         "envFrom": [{"secretRef": {"name": f"{resource_name}-keys"}}],
                         "resources": {"requests": {"cpu": "50m", "memory": "128Mi"}, "limits": {"cpu": "500m", "memory": "256Mi"}},
+                        # Probes: readiness = may it get traffic (fails -> taken out of the Service); startup = has it
+                        # booted (liveness waits until then); liveness = is it stuck (fails -> container restarted).
                         "readinessProbe": {"httpGet": {"path": "/healthz", "port": 8000}, "periodSeconds": 5, "timeoutSeconds": 3},
                         # A busy node can take a minute to boot Python and seconds to answer: liveness waits for the
                         # first healthy answer, then restarts only after a minute of 5 s timeouts (1 s killed busy agents).
@@ -244,8 +256,10 @@ def build_objects(agent, tools, siblings_by_name):
                 },
             },
         }},
+        # Its address: http://agent-<name>.<namespace>.svc (port 80 -> the pod's 8000). The API and teammates call this.
         {"apiVersion": "v1", "kind": "Service", "metadata": metadata,
          "spec": {"selector": {"platform.hacktx.dev/agent": name}, "ports": [{"port": 80, "targetPort": 8000}]}},
+        # Its firewall. Listing both policyTypes means anything not allowed above is dropped, in and out.
         {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": metadata, "spec": {
             "podSelector": {"matchLabels": {"platform.hacktx.dev/agent": name}},
             "policyTypes": ["Ingress", "Egress"], "ingress": ingress, "egress": egress}},
